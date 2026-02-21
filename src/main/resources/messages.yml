@@ -5,8 +5,11 @@ prefix: '&f&l[&c&lOz&4&lTowns&f&l] '
 help:
   "1":
     - "&f/towns help [1-2] &7- &aView all town commands."
+    - "&f/towns commands [1-2] &7- &aAlias for /towns help."
     - "&f/towns create [townName] &7- &aCreate a new town."
+    - "&f/towns rename [newName] &7- &aRename your town."
     - "&f/towns abandon confirm &7- &aDelete your town."
+    - "&f/towns add [player] &7- &aAlias for /towns invite."
     - "&f/towns invite [player] &7- &aInvite a player to your town."
     - "&f/towns accept &7- &aAccept your pending town invite."
     - "&f/towns deny &7- &aDeny your pending town invite."
@@ -23,13 +26,16 @@ help:
     - "&f/towns spawn &7- &aTeleport to your town spawn."
     - "&f/towns setmayor [player] &7- &aTransfers town ownership."
     - "&f/towns visualizer &7- &aShow claimed and unclaimed chunk borders."
+    - "&f/towns chunks &7- &aAlias for /towns visualizer."
     - "&f/townbank gui &7- &aOpen the town bank menu."
     - "&f/townbank help &7- &aView town bank commands."
+    - "&f/townbank commands &7- &aAlias for /townbank help."
     - "&f/tm [message] &7- &aMessage in the town member only chat."
 
 # The bank help menu to show commands
 bankhelp:
   - "&f/townbank help &7- &aShow all town bank commands."
+  - "&f/townbank commands &7- &aAlias for /townbank help."
   - "&f/townbank gui &7- &aOpen the town bank menu."
   - "&f/townbank deposit [amount] &7- &aDeposit money into the town bank."
   - "&f/townbank withdraw [amount] &7- &aWithdraw money from the town bank."
@@ -166,11 +172,13 @@ messages:
   wilderness: "&a&lWilderness"
 
 # Admin messages
+adminprefix: "&f[&cTownsAdmin&f] "
 adminmessages:
   help:
     - "&f/townadmin help &aShows this admin help menu."
     - "&f/townadmin reload &aReloads the plugin config and messages."
     - "&f/townadmin delete [town] &aDeletes a town."
+    - "&f/townadmin spawn [town] &aTeleports you to the town spawn."
     - "&f/townadmin setspawn [town] &aSets the town spawn to your current location."
     - "&f/townadmin removespawn [town] &aRemoves the town spawn."
     - "&f/townadmin add [town] [player] &aAdds a player to a town."
@@ -183,7 +191,9 @@ adminmessages:
   playernotfound: "&cPlayer not found."
   towndeleted: "&aTown &f{town} &ahas been deleted."
   spawnsuccess: "&aTown spawn set for &f{town}&a."
+  spawnnotfound: "&cThat town does not have a spawn set."
   spawnremoved: "&aTown spawn removed for &f{town}&a."
+  teleported: "&aTeleported to &f{town}&a spawn."
   addedmember: "&aAdded &f{player} &ato &f{town}&a."
   removedmember: "&aRemoved &f{player} &afrom &f{town}&a."
   alreadyintown: "&cPlayer is already in a town."

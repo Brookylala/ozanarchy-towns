@@ -21,7 +21,7 @@ import static net.ozanarchy.towns.TownsPlugin.messagesConfig;
 public class AdminEvents {
     private final TownsPlugin plugin;
     private final DatabaseHandler db;
-    private final String prefix = Utils.prefix();
+    private final String prefix = Utils.adminPrefix();
 
     public AdminEvents(DatabaseHandler db, TownsPlugin plugin) {
         this.db = db;
@@ -268,5 +268,30 @@ public class AdminEvents {
         if (lockInfo != null) {
             lockService.unlock(block, lockInfo.keyName());
         }
+    }
+
+    public void spawnTeleport(Player p, String townName){
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            Integer townId = db.getTownIdByName(townName);
+            if (townId == null) {
+                p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("adminmessages.townnotfound")));
+                return;
+            }
+
+            Location spawn = db.getTownSpawn(townId);
+
+            if(spawn == null){
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("adminmessages.spawnnotfound")));
+                });
+                return;
+            }
+
+            Bukkit.getScheduler().runTask(plugin, () ->{
+                p.teleport(db.getTownSpawn(townId));
+                p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("adminmessages.teleported")
+                    .replace("{town}", townName)));
+            });
+        });
     }
 }

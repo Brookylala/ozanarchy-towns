@@ -45,18 +45,18 @@ public final class TownsPlugin extends JavaPlugin {
         saveDefaultConfig();
         loadGuiConfig();
         loadMessagesConfig();
+        applyCacheSettings();
         //Economy Enabled?
         economy = Bukkit.getServicesManager().load(EconomyAPI.class);
 
         if (economy == null) {
             getLogger().severe("Economy API not found! Disabling.");
             Bukkit.getPluginManager().disablePlugin(this);
-            return;
         }
 
         // Initialize handlers
         DatabaseHandler db = new DatabaseHandler(this);
-        TownEvents claim = new TownEvents(db, this, economy);
+        TownEvents claim = new TownEvents(db, this, economy, chunkCache);
         MemberEvents memberEvents = new MemberEvents(db, this, economy, chunkCache);
         AdminEvents adminEvents = new AdminEvents(db, this);
 
@@ -82,7 +82,7 @@ public final class TownsPlugin extends JavaPlugin {
 
         // Register events
         getServer().getPluginManager().registerEvents(claim, this);
-        getServer().getPluginManager().registerEvents(new MemberEvents(db, this, economy, chunkCache), this);
+        getServer().getPluginManager().registerEvents(memberEvents, this);
         getServer().getPluginManager().registerEvents(new ProtectionListener(this, db ,chunkCache), this);
         getServer().getPluginManager().registerEvents(new LockPickListener(this, db, economy), this);
         getServer().getPluginManager().registerEvents(mainGui, this);
@@ -98,6 +98,9 @@ public final class TownsPlugin extends JavaPlugin {
             new TownsPlaceholder(this, db).register();
             getLogger().info("PlaceholderAPI Enabled");
         }
+
+        // Load chunk cache once at startup, then refresh periodically.
+        reloadChunkCache();
 
         //Reload chunk info
         Bukkit.getScheduler().runTaskTimerAsynchronously(this, this::reloadChunkCache, 300L, 300L);
@@ -308,6 +311,12 @@ public final class TownsPlugin extends JavaPlugin {
         config = getConfig();
         loadGuiConfig();
         loadMessagesConfig();
+        applyCacheSettings();
+    }
+
+    private void applyCacheSettings() {
+        long ttlSeconds = config.getLong("cache.ttl-seconds", 15L);
+        DatabaseHandler.setCacheTtlSeconds(ttlSeconds);
     }
 
     @Override

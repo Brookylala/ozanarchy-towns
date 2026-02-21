@@ -13,7 +13,6 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -29,7 +28,6 @@ public class TownsCommand implements CommandExecutor, TabCompleter {
     private final MembersGui membersGui;
     private String prefix = Utils.prefix();
     private String noPerm = messagesConfig.getString("messages.nopermission");
-    private String incorrectUsage = messagesConfig.getString("messages.incorrectusage");
 
     public TownsCommand(DatabaseHandler db, TownEvents events, MemberEvents mEvents, MainGui gui, MembersGui membersGui) {
         this.db = db;

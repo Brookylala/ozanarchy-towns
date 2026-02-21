@@ -6,6 +6,7 @@ import net.ozanarchy.chestlock.lock.LockInfo;
 import net.ozanarchy.chestlock.lock.LockService;
 import net.ozanarchy.towns.TownsPlugin;
 import net.ozanarchy.towns.util.Utils;
+import net.ozanarchy.towns.handlers.ChunkHandler;
 import net.ozanarchy.towns.handlers.DatabaseHandler;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
@@ -28,6 +29,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 import static net.ozanarchy.towns.TownsPlugin.config;
@@ -37,6 +39,7 @@ public class TownEvents implements Listener {
     private final DatabaseHandler db;
     private final TownsPlugin plugin;
     private final EconomyAPI economy;
+    private final ChunkHandler chunkCache;
     private final String prefix = Utils.prefix();
     private final String notEnough = messagesConfig.getString("messages.notenough");
     private final String noPerm = messagesConfig.getString("messages.nopermission");
@@ -45,11 +48,13 @@ public class TownEvents implements Listener {
     private final Map<UUID, BukkitTask> teleportTasks = new HashMap<>();
     private final Map<UUID, BossBar> townBossBars = new HashMap<>();
     private final Map<UUID, Long> lastSpawnSet = new HashMap<>();
+    private final Map<UUID, Integer> lastTown = new HashMap<>();
 
-    public TownEvents(DatabaseHandler data, TownsPlugin plugin, EconomyAPI economy){
+    public TownEvents(DatabaseHandler data, TownsPlugin plugin, EconomyAPI economy, ChunkHandler chunkCache){
         this.db = data;
         this.plugin = plugin;
         this.economy = economy;
+        this.chunkCache = chunkCache;
     }
 
     // ==========================================
@@ -91,7 +96,7 @@ public class TownEvents implements Listener {
                 return;
             }
 
-            Integer chunkTownId = db.getChunkTownId(requestedChunk);
+            Integer chunkTownId = chunkCache.getTownId(requestedChunk);
             if (chunkTownId == null || !chunkTownId.equals(townId)) {
                 Bukkit.getScheduler().runTask(plugin, () ->
                         p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.setspawnrestricted")))
@@ -304,6 +309,7 @@ public class TownEvents implements Listener {
 
                 db.increaseUpkeep(townId, upkeepCost);
                 db.saveClaim(chunk, townId);
+                chunkCache.setClaim(chunk, townId);
                 Bukkit.getScheduler().runTask(plugin, () -> {
                    p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.chunkclaimed")));
                 });
@@ -331,7 +337,7 @@ public class TownEvents implements Listener {
                 });
                 return;
             }
-            Integer claimTown = db.getChunkTownId(chunk);
+            Integer claimTown = chunkCache.getTownId(chunk);
             if(claimTown == null){
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.chunknotowned")));
@@ -347,6 +353,7 @@ public class TownEvents implements Listener {
 
             boolean success = db.unClaimChunk(chunk, townId);
             if(success){
+                chunkCache.removeClaim(chunk);
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.chunkremoved")));
                 });
@@ -495,6 +502,7 @@ public class TownEvents implements Listener {
             }
 
             db.deleteClaim(townId);
+            plugin.reloadChunkCache();
             db.deleteMembers(townId);
             db.deleteTownBank(townId);
             db.deleteTown(townId);
@@ -550,11 +558,22 @@ public class TownEvents implements Listener {
         if (bar != null) {
             bar.removeAll();
         }
+
+        lastTown.remove(p.getUniqueId());
     }
 
     private void updateTownBossBar(Player p, Chunk chunk) {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-            Integer townId = db.getChunkTownId(chunk);
+            Integer townId = chunkCache.getTownId(chunk);
+            UUID pUUID = p.getUniqueId();
+            Integer previousTown = lastTown.get(pUUID);
+
+            if (Objects.equals(previousTown, townId)) {
+                return;
+            }
+
+            lastTown.put(pUUID, townId);
+
             String title;
             BarColor color;
             BarStyle style;
@@ -571,7 +590,7 @@ public class TownEvents implements Listener {
             }
 
             Bukkit.getScheduler().runTask(plugin, () -> {
-                BossBar bar = townBossBars.computeIfAbsent(p.getUniqueId(), uuid -> {
+                BossBar bar = townBossBars.computeIfAbsent(pUUID, uuid -> {
                     BossBar newBar = Bukkit.createBossBar(title, color, style);
                     newBar.addPlayer(p);
                     return newBar;

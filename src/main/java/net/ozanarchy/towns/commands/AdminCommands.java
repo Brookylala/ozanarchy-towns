@@ -4,6 +4,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -16,7 +17,7 @@ import static net.ozanarchy.towns.TownsPlugin.messagesConfig;
 
 public class AdminCommands implements CommandExecutor, TabCompleter {
     private final AdminEvents adminEvents;
-    private String prefix = Utils.prefix();
+    private String prefix = Utils.adminPrefix();
     private String noPerm = messagesConfig.getString("messages.nopermission");
     private String incorrectUsage = messagesConfig.getString("adminmessages.incorrectusage");
 
@@ -27,7 +28,7 @@ public class AdminCommands implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
-            List<String> subCommands = Arrays.asList("help", "reload", "delete", "setspawn", "removespawn", "add", "remove");
+            List<String> subCommands = Arrays.asList("help", "reload", "delete", "setspawn", "removespawn", "add", "remove", "spawn");
             return subCommands.stream()
                     .filter(s -> s.startsWith(args[0].toLowerCase()))
                     .sorted()
@@ -111,6 +112,19 @@ public class AdminCommands implements CommandExecutor, TabCompleter {
                 }
                 adminEvents.setMayor(sender, args[1], args[2]);
                 return true;
+            }
+            case "spawn" -> {
+                if (args.length < 2){
+                    sender.sendMessage(Utils.getColor(prefix + incorrectUsage));
+                    return true;
+                }
+                if (sender instanceof Player p){
+                    adminEvents.spawnTeleport(p, args[1]);
+                    return true;
+                } else {
+                    Bukkit.getLogger().info("Players only.");
+                    return true;
+                }
             }
         }
 

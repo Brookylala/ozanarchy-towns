@@ -34,6 +34,10 @@ town-creation-command: "chestlock lock {world} {x} {y} {z} {player}"
 # Delay in seconds for the /town spawn command
 spawn-delay: 15
 
+# Cache settings How often should the database be loaded into cache
+cache:
+  ttl-seconds: 15
+
 #town costs and upkeep. Cost is the amount of money it costs to create a town. Base upkeep is the amount of money a town has to pay every upkeep period. Added member upkeep is the amount of money a town has to pay for each member added to the town. Added claim upkeep is the amount of money a town has to pay for each claim added to the town.
 towns:
   createcost: 50.0

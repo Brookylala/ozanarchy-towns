@@ -36,12 +36,12 @@ mvn clean package
 
 Output jar:
 
-- `target/ozanarchy-towns-1.0-shaded.jar`
+- `target/ozanarchy-towns-1.0.jar`
 
 ## Installation
 
 1. Build the plugin.
-2. Copy `target/ozanarchy-towns-1.0-shaded.jar` to your server `plugins/` directory.
+2. Copy `target/ozanarchy-towns-1.0.jar` to your server `plugins/` directory.
 3. Start the server once to generate default config files.
 4. Edit `plugins/ozanarchy-towns/config.yml` and set MySQL credentials:
    - `mysql.host`
@@ -58,7 +58,7 @@ Output jar:
 Aliases: `/town`, `/oztowns`, `/towny`
 
 - `/towns` or `/towns gui`
-- `/towns help [1-2]`
+- `/towns help [1-2]` (alias: `commands`)
 - `/towns create <name>`
 - `/towns rename <newName>`
 - `/towns abandon confirm`
@@ -85,7 +85,7 @@ Aliases: `/tbank`, `/townsbank`
 - `/townbank deposit <amount>`
 - `/townbank withdraw <amount>`
 - `/townbank balance` (alias: `bal`)
-- `/townbank help`
+- `/townbank help` (alias: `commands`)
 
 ### Admin Commands (`/townadmin`)
 
@@ -94,6 +94,7 @@ Alias: `/tadmin`
 - `/townadmin help`
 - `/townadmin reload`
 - `/townadmin delete <town>`
+- `/townadmin spawn <town>` (teleport to town spawn)
 - `/townadmin setspawn <town>`
 - `/townadmin removespawn <town>`
 - `/townadmin add <town> <player>`
@@ -124,6 +125,7 @@ Alias: `/tadmin`
 - `oztowns.commands.members`
 - `oztowns.commands.transfer`
 - `oztowns.commands.visualizer`
+- `oztowns.commands.help` (checked by `/towns help` and `/towns commands`)
 - `oztowns.commands.bank`
 - `oztowns.commands.bank.deposit`
 - `oztowns.commands.bank.withdraw`
@@ -163,3 +165,5 @@ Other configurable files:
 
 - MySQL tables are created automatically on startup.
 - This project targets Paper/Spigot `1.21.x` APIs.
+- `/towns help` and `/towns commands` are both supported and read from `messages.yml`.
+- `/townbank help` and `/townbank commands` are both supported and read from `messages.yml`.

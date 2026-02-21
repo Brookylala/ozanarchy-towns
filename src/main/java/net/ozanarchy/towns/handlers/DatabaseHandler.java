@@ -2,19 +2,76 @@ package net.ozanarchy.towns.handlers;
 
 import net.ozanarchy.towns.TownsPlugin;
 import org.bukkit.Chunk;
+import org.bukkit.Location;
 
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class DatabaseHandler {
+    private static volatile long CACHE_TTL_MS = 15_000L;
+    private static final int NULL_TOWN_ID = -1;
+
+    private static final Map<String, Integer> claimTownCache = new ConcurrentHashMap<>();
+    private static final Map<UUID, Integer> playerTownCache = new ConcurrentHashMap<>();
+    private static final Map<UUID, Long> playerTownCacheExpiresAt = new ConcurrentHashMap<>();
+    private static final Map<UUID, String> memberRoleCache = new ConcurrentHashMap<>();
+    private static final Map<UUID, Long> memberRoleCacheExpiresAt = new ConcurrentHashMap<>();
+    private static final Map<Integer, String> townNameByIdCache = new ConcurrentHashMap<>();
+    private static final Map<Integer, Long> townNameByIdCacheExpiresAt = new ConcurrentHashMap<>();
+    private static final Map<String, Integer> townIdByNameCache = new ConcurrentHashMap<>();
+    private static final Map<String, Long> townIdByNameCacheExpiresAt = new ConcurrentHashMap<>();
+    private static final Map<Integer, Location> townSpawnCache = new ConcurrentHashMap<>();
+    private static final Map<Integer, Long> townSpawnCacheExpiresAt = new ConcurrentHashMap<>();
+    private static final Map<Integer, List<TownMember>> townMembersCache = new ConcurrentHashMap<>();
+    private static final Map<Integer, Long> townMembersCacheExpiresAt = new ConcurrentHashMap<>();
+
     private final TownsPlugin plugin;
 
     public DatabaseHandler(TownsPlugin plugin) {
         this.plugin = plugin;
+    }
+
+    public static void setCacheTtlSeconds(long ttlSeconds) {
+        long safeSeconds = Math.max(1L, ttlSeconds);
+        CACHE_TTL_MS = safeSeconds * 1000L;
+    }
+
+    private boolean isExpired(Map<?, Long> expiresAtMap, Object key) {
+        Long expiresAt = expiresAtMap.get(key);
+        return expiresAt == null || expiresAt < System.currentTimeMillis();
+    }
+
+    private void cacheWithTtl(Map<UUID, Integer> map, Map<UUID, Long> expiresAtMap, UUID key, Integer value) {
+        map.put(key, value == null ? NULL_TOWN_ID : value);
+        expiresAtMap.put(key, System.currentTimeMillis() + CACHE_TTL_MS);
+    }
+
+    private void invalidatePlayerTown(UUID uuid) {
+        playerTownCache.remove(uuid);
+        playerTownCacheExpiresAt.remove(uuid);
+        memberRoleCache.remove(uuid);
+        memberRoleCacheExpiresAt.remove(uuid);
+    }
+
+    private void invalidateTownIdentity(int townId) {
+        String cachedName = townNameByIdCache.remove(townId);
+        townNameByIdCacheExpiresAt.remove(townId);
+        if (cachedName != null) {
+            townIdByNameCache.remove(cachedName.toLowerCase());
+            townIdByNameCacheExpiresAt.remove(cachedName.toLowerCase());
+        }
+    }
+
+    private void invalidateTownMembers(int townId) {
+        townMembersCache.remove(townId);
+        townMembersCacheExpiresAt.remove(townId);
     }
 
     public static class TownMember {
@@ -43,25 +100,7 @@ public class DatabaseHandler {
      * Checks if a specific chunk is claimed by any town.
      */
     public boolean getChunkClaimed(Chunk chunk){
-        String sql = """
-            SELECT 1 FROM claims
-            WHERE world=? AND chunkx=? AND chunkz=?
-            LIMIT 1
-        """;
-
-        try (PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)) {
-            stmt.setString(1, chunk.getWorld().getName());
-            stmt.setInt(2, chunk.getX());
-            stmt.setInt(3, chunk.getZ());
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                return rs.next();
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-
-        return false;
+        return getChunkTownId(chunk) != null;
     }
 
     /**
@@ -79,6 +118,7 @@ public class DatabaseHandler {
             stmt.setInt(3, chunk.getZ());
             stmt.setInt(4, townID);
             stmt.executeUpdate();
+            claimTownCache.put(chunk.getWorld().getName() + ":" + chunk.getX() + ":" + chunk.getZ(), townID);
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -88,6 +128,12 @@ public class DatabaseHandler {
      * Gets the town ID associated with a specific chunk.
      */
     public Integer getChunkTownId(Chunk chunk) {
+        String key = chunk.getWorld().getName() + ":" + chunk.getX() + ":" + chunk.getZ();
+        Integer cachedTownId = claimTownCache.get(key);
+        if (cachedTownId != null) {
+            return cachedTownId;
+        }
+
         String sql = """
             SELECT town_id FROM claims
             WHERE world=? AND chunkx=? AND chunkz=?
@@ -101,7 +147,9 @@ public class DatabaseHandler {
 
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    return rs.getInt("town_id");
+                    Integer townId = rs.getInt("town_id");
+                    claimTownCache.put(key, townId);
+                    return townId;
                 }
             }
         } catch (SQLException e) {
@@ -126,7 +174,11 @@ public class DatabaseHandler {
             stmt.setInt(3, chunk.getZ());
             stmt.setInt(4, townId);
 
-            return stmt.executeUpdate() > 0;
+            boolean removed = stmt.executeUpdate() > 0;
+            if (removed) {
+                claimTownCache.remove(chunk.getWorld().getName() + ":" + chunk.getX() + ":" + chunk.getZ());
+            }
+            return removed;
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -142,6 +194,7 @@ public class DatabaseHandler {
         try(PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)){
             stmt.setInt(1, townId);
             stmt.executeUpdate();
+            claimTownCache.entrySet().removeIf(entry -> entry.getValue() != null && entry.getValue() == townId);
         } catch (SQLException e){
             e.printStackTrace();
         }
@@ -210,6 +263,8 @@ public class DatabaseHandler {
         }catch (SQLException e){
             e.printStackTrace();
         }
+        claimTownCache.clear();
+        claimTownCache.putAll(claims);
         return claims;
     }
 
@@ -234,7 +289,12 @@ public class DatabaseHandler {
 
             try(ResultSet rs = stmt.getGeneratedKeys()) {
                 if(rs.next()){
-                    return rs.getInt(1);
+                    int townId = rs.getInt(1);
+                    townNameByIdCache.put(townId, name);
+                    townNameByIdCacheExpiresAt.put(townId, System.currentTimeMillis() + CACHE_TTL_MS);
+                    townIdByNameCache.put(name.toLowerCase(), townId);
+                    townIdByNameCacheExpiresAt.put(name.toLowerCase(), System.currentTimeMillis() + CACHE_TTL_MS);
+                    return townId;
                 }
             }
         }
@@ -250,6 +310,10 @@ public class DatabaseHandler {
         try(PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)) {
             stmt.setInt(1, townId);
             stmt.executeUpdate();
+            invalidateTownIdentity(townId);
+            townSpawnCache.remove(townId);
+            townSpawnCacheExpiresAt.remove(townId);
+            invalidateTownMembers(townId);
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -259,25 +323,17 @@ public class DatabaseHandler {
      * Checks if a town with the given name exists.
      */
     public boolean townExists(String name){
-        String sql = "SELECT 1 FROM towns WHERE name = ? LIMIT 1";
-
-        try (PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)){
-            stmt.setString(1, name);
-
-            try (ResultSet rs = stmt.executeQuery()){
-                return rs.next();
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-
-        return false;
+        return getTownIdByName(name) != null;
     }
 
     /**
      * Gets the name of a town by its ID.
      */
     public String getTownName(int townId) {
+        if (!isExpired(townNameByIdCacheExpiresAt, townId) && townNameByIdCache.containsKey(townId)) {
+            return townNameByIdCache.get(townId);
+        }
+
         String sql = """
             SELECT name
             FROM towns
@@ -290,7 +346,14 @@ public class DatabaseHandler {
 
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    return rs.getString("name");
+                    String name = rs.getString("name");
+                    if (name != null) {
+                        townNameByIdCache.put(townId, name);
+                        townNameByIdCacheExpiresAt.put(townId, System.currentTimeMillis() + CACHE_TTL_MS);
+                        townIdByNameCache.put(name.toLowerCase(), townId);
+                        townIdByNameCacheExpiresAt.put(name.toLowerCase(), System.currentTimeMillis() + CACHE_TTL_MS);
+                    }
+                    return name;
                 }
             }
         } catch (SQLException e) {
@@ -304,16 +367,31 @@ public class DatabaseHandler {
      * Gets the town ID by name (case-insensitive).
      */
     public Integer getTownIdByName(String name) {
+        String normalized = name == null ? null : name.toLowerCase();
+        if (normalized != null && !isExpired(townIdByNameCacheExpiresAt, normalized) && townIdByNameCache.containsKey(normalized)) {
+            Integer cachedTownId = townIdByNameCache.get(normalized);
+            return cachedTownId == NULL_TOWN_ID ? null : cachedTownId;
+        }
+
         String sql = "SELECT id FROM towns WHERE LOWER(name) = LOWER(?) LIMIT 1";
         try (PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)) {
             stmt.setString(1, name);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    return rs.getInt("id");
+                    int townId = rs.getInt("id");
+                    if (normalized != null) {
+                        townIdByNameCache.put(normalized, townId);
+                        townIdByNameCacheExpiresAt.put(normalized, System.currentTimeMillis() + CACHE_TTL_MS);
+                    }
+                    return townId;
                 }
             }
         } catch (SQLException e) {
             e.printStackTrace();
+        }
+        if (normalized != null) {
+            townIdByNameCache.put(normalized, NULL_TOWN_ID);
+            townIdByNameCacheExpiresAt.put(normalized, System.currentTimeMillis() + CACHE_TTL_MS);
         }
         return null;
     }
@@ -356,6 +434,16 @@ public class DatabaseHandler {
             stmt.setDouble(4, z);
             stmt.setInt(5, townId);
             stmt.executeUpdate();
+            if (world == null) {
+                townSpawnCache.remove(townId);
+                townSpawnCacheExpiresAt.remove(townId);
+            } else {
+                org.bukkit.World bukkitWorld = org.bukkit.Bukkit.getWorld(world);
+                if (bukkitWorld != null) {
+                    townSpawnCache.put(townId, new Location(bukkitWorld, x, y, z));
+                    townSpawnCacheExpiresAt.put(townId, System.currentTimeMillis() + CACHE_TTL_MS);
+                }
+            }
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -378,6 +466,10 @@ public class DatabaseHandler {
      * Gets the spawn location of a town.
      */
     public org.bukkit.Location getTownSpawn(int townId) {
+        if (!isExpired(townSpawnCacheExpiresAt, townId) && townSpawnCache.containsKey(townId)) {
+            return townSpawnCache.get(townId);
+        }
+
         String sql = "SELECT world, spawn_x, spawn_y, spawn_z FROM towns WHERE id = ? LIMIT 1";
         try (PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)) {
             stmt.setInt(1, townId);
@@ -387,7 +479,10 @@ public class DatabaseHandler {
                     if (worldName == null) return null;
                     org.bukkit.World world = org.bukkit.Bukkit.getWorld(worldName);
                     if (world == null) return null;
-                    return new org.bukkit.Location(world, rs.getDouble("spawn_x"), rs.getDouble("spawn_y"), rs.getDouble("spawn_z"));
+                    org.bukkit.Location location = new org.bukkit.Location(world, rs.getDouble("spawn_x"), rs.getDouble("spawn_y"), rs.getDouble("spawn_z"));
+                    townSpawnCache.put(townId, location);
+                    townSpawnCacheExpiresAt.put(townId, System.currentTimeMillis() + CACHE_TTL_MS);
+                    return location;
                 }
             }
         } catch (SQLException e) {
@@ -405,6 +500,11 @@ public class DatabaseHandler {
             stmt.setString(1, name);
             stmt.setInt(2, townId);
             stmt.executeUpdate();
+            invalidateTownIdentity(townId);
+            townNameByIdCache.put(townId, name);
+            townNameByIdCacheExpiresAt.put(townId, System.currentTimeMillis() + CACHE_TTL_MS);
+            townIdByNameCache.put(name.toLowerCase(), townId);
+            townIdByNameCacheExpiresAt.put(name.toLowerCase(), System.currentTimeMillis() + CACHE_TTL_MS);
         } catch(SQLException e){
             e.printStackTrace();
         }
@@ -427,7 +527,14 @@ public class DatabaseHandler {
             stmt.setInt(1, townId);
             stmt.setString(2, uuid.toString());
             stmt.setString(3, role);
-            return stmt.executeUpdate() > 0;
+            boolean added = stmt.executeUpdate() > 0;
+            if (added) {
+                cacheWithTtl(playerTownCache, playerTownCacheExpiresAt, uuid, townId);
+                memberRoleCache.put(uuid, role);
+                memberRoleCacheExpiresAt.put(uuid, System.currentTimeMillis() + CACHE_TTL_MS);
+                invalidateTownMembers(townId);
+            }
+            return added;
         }catch (SQLException e){
             e.printStackTrace();
         }
@@ -438,6 +545,11 @@ public class DatabaseHandler {
      * Gets the town ID for a specific player.
      */
     public Integer getPlayerTownId(UUID uuid) {
+        if (!isExpired(playerTownCacheExpiresAt, uuid) && playerTownCache.containsKey(uuid)) {
+            Integer cachedTownId = playerTownCache.get(uuid);
+            return cachedTownId == NULL_TOWN_ID ? null : cachedTownId;
+        }
+
         String sql = """
             SELECT town_id
             FROM town_members
@@ -450,12 +562,16 @@ public class DatabaseHandler {
 
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
-                    return rs.getInt("town_id");
+                    Integer townId = rs.getInt("town_id");
+                    cacheWithTtl(playerTownCache, playerTownCacheExpiresAt, uuid, townId);
+                    return townId;
                 }
             }
         } catch (SQLException e) {
             e.printStackTrace();
         }
+
+        cacheWithTtl(playerTownCache, playerTownCacheExpiresAt, uuid, null);
 
         return null;
     }
@@ -498,7 +614,14 @@ public class DatabaseHandler {
             stmt.setString(1, role);
             stmt.setString(2, uuid.toString());
             stmt.setInt(3, townId);
-            return stmt.executeUpdate() > 0;
+            boolean updated = stmt.executeUpdate() > 0;
+            if (updated) {
+                cacheWithTtl(playerTownCache, playerTownCacheExpiresAt, uuid, townId);
+                memberRoleCache.put(uuid, role);
+                memberRoleCacheExpiresAt.put(uuid, System.currentTimeMillis() + CACHE_TTL_MS);
+                invalidateTownMembers(townId);
+            }
+            return updated;
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -509,20 +632,12 @@ public class DatabaseHandler {
      * Checks if a player has the 'MEMBER' rank in a town.
      */
     public boolean isMemberRank(UUID uuid, int townId){
-        String sql = """
-            SELECT 1 FROM town_members
-            WHERE uuid=? AND town_id=? AND role='MEMBER'
-            LIMIT 1
-        """;
-
-        try(PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)){
-            stmt.setString(1, uuid.toString());
-            stmt.setInt(2, townId);
-            return stmt.executeQuery().next();
-        } catch (SQLException e) {
-            e.printStackTrace();
+        Integer playerTownId = getPlayerTownId(uuid);
+        if (playerTownId == null || playerTownId != townId) {
+            return false;
         }
-        return false;
+        String role = getMemberRole(uuid);
+        return "MEMBER".equals(role);
     }
 
     /**
@@ -534,7 +649,12 @@ public class DatabaseHandler {
         try(PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)){
             stmt.setString(1, uuid.toString());
             stmt.setInt(2, townId);
-            return stmt.executeUpdate() > 0;
+            boolean removed = stmt.executeUpdate() > 0;
+            if (removed) {
+                invalidatePlayerTown(uuid);
+                invalidateTownMembers(townId);
+            }
+            return removed;
         } catch(SQLException e){
             e.printStackTrace();
         }
@@ -546,6 +666,10 @@ public class DatabaseHandler {
      * Gets a list of members for a town ordered by role.
      */
     public java.util.List<TownMember> getTownMembers(int townId) {
+        if (!isExpired(townMembersCacheExpiresAt, townId) && townMembersCache.containsKey(townId)) {
+            return new ArrayList<>(townMembersCache.get(townId));
+        }
+
         java.util.List<TownMember> members = new java.util.ArrayList<>();
         String sql = """
             SELECT uuid, role
@@ -561,7 +685,11 @@ public class DatabaseHandler {
                     String uuidStr = rs.getString("uuid");
                     String role = rs.getString("role");
                     try {
-                        members.add(new TownMember(UUID.fromString(uuidStr), role));
+                        UUID memberUuid = UUID.fromString(uuidStr);
+                        members.add(new TownMember(memberUuid, role));
+                        cacheWithTtl(playerTownCache, playerTownCacheExpiresAt, memberUuid, townId);
+                        memberRoleCache.put(memberUuid, role);
+                        memberRoleCacheExpiresAt.put(memberUuid, System.currentTimeMillis() + CACHE_TTL_MS);
                     } catch (IllegalArgumentException ignored) {
                         // Skip malformed UUIDs
                     }
@@ -571,6 +699,8 @@ public class DatabaseHandler {
             e.printStackTrace();
         }
 
+        townMembersCache.put(townId, Collections.unmodifiableList(new ArrayList<>(members)));
+        townMembersCacheExpiresAt.put(townId, System.currentTimeMillis() + CACHE_TTL_MS);
         return members;
     }
 
@@ -578,20 +708,11 @@ public class DatabaseHandler {
      * Checks if a player is the mayor of a town.
      */
     public boolean isMayor(UUID uuid, int townId) {
-        String sql = """
-            SELECT 1 FROM town_members
-            WHERE uuid=? AND town_id=? AND role='MAYOR'
-            LIMIT 1
-        """;
-
-        try(PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)) {
-            stmt.setString(1, uuid.toString());
-            stmt.setInt(2, townId);
-            return stmt.executeQuery().next();
-        } catch (SQLException e) {
-            e.printStackTrace();
+        Integer playerTownId = getPlayerTownId(uuid);
+        if (playerTownId == null || playerTownId != townId) {
+            return false;
         }
-        return false;
+        return "MAYOR".equals(getMemberRole(uuid));
     }
 
     /** 
@@ -607,32 +728,55 @@ public class DatabaseHandler {
         try (PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)) {
             stmt.setString(1, uuid.toString());
             stmt.setInt(2, townId);
-            return stmt.executeUpdate() > 0;
+            boolean updated = stmt.executeUpdate() > 0;
+            if (updated) {
+                cacheWithTtl(playerTownCache, playerTownCacheExpiresAt, uuid, townId);
+                memberRoleCache.put(uuid, "MAYOR");
+                memberRoleCacheExpiresAt.put(uuid, System.currentTimeMillis() + CACHE_TTL_MS);
+                invalidateTownMembers(townId);
+            }
+            return updated;
         } catch (SQLException e) {
             e.printStackTrace();
         }
         return false;
     }
 
-    /**
-     * Checks if a player is a town administrator (Mayor or Officer).
-     */
-    public boolean isTownAdmin(UUID uuid, int townId){
-        String sql = """
-                SELECT 1 FROM town_members
-                WHERE uuid=? AND town_id=? AND role IN ('MAYOR','OFFICER')
-                LIMIT 1
-                """;
-        try(PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)){
-            stmt.setString(1, uuid.toString());
-            stmt.setInt(2, townId);
+    private String getMemberRole(UUID uuid) {
+        if (!isExpired(memberRoleCacheExpiresAt, uuid) && memberRoleCache.containsKey(uuid)) {
+            return memberRoleCache.get(uuid);
+        }
 
-            return stmt.executeQuery().next();
+        String sql = "SELECT role FROM town_members WHERE uuid = ? LIMIT 1";
+        try (PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)) {
+            stmt.setString(1, uuid.toString());
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    String role = rs.getString("role");
+                    if (role != null) {
+                        memberRoleCache.put(uuid, role);
+                        memberRoleCacheExpiresAt.put(uuid, System.currentTimeMillis() + CACHE_TTL_MS);
+                    }
+                    return role;
+                }
+            }
         } catch (SQLException e) {
             e.printStackTrace();
         }
 
-        return false;
+        return null;
+    }
+
+    /**
+     * Checks if a player is a town administrator (Mayor or Officer).
+     */
+    public boolean isTownAdmin(UUID uuid, int townId){
+        Integer playerTownId = getPlayerTownId(uuid);
+        if (playerTownId == null || playerTownId != townId) {
+            return false;
+        }
+        String role = getMemberRole(uuid);
+        return "MAYOR".equals(role) || "OFFICER".equals(role);
     }
 
     /**
@@ -642,8 +786,13 @@ public class DatabaseHandler {
         String sql = "DELETE FROM town_members WHERE town_id=?";
 
         try(PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)){
+            List<TownMember> existingMembers = getTownMembers(townId);
             stmt.setInt(1, townId);
             stmt.executeUpdate();
+            for (TownMember member : existingMembers) {
+                invalidatePlayerTown(member.getUuid());
+            }
+            invalidateTownMembers(townId);
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -653,26 +802,12 @@ public class DatabaseHandler {
      * Checks if a player has permission to build/interact in a specific chunk.
      */
     public boolean canBuild(UUID uuid, Chunk chunk){
-        String sql = """
-            SELECT 1
-            FROM claims c
-            JOIN town_members m ON c.town_id = m.town_id
-            WHERE c.world=? AND c.chunkx=? AND c.chunkz=?
-            AND m.uuid=?
-            LIMIT 1
-        """;
-        try(PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)) {
-            stmt.setString(1, chunk.getWorld().getName());
-            stmt.setInt(2, chunk.getX());
-            stmt.setInt(3, chunk.getZ());
-            stmt.setString(4, uuid.toString());
-
-            return stmt.executeQuery().next();
-        } catch (SQLException e){
-            e.printStackTrace();
+        Integer chunkTownId = getChunkTownId(chunk);
+        if (chunkTownId == null) {
+            return true;
         }
-
-        return false;
+        Integer playerTownId = getPlayerTownId(uuid);
+        return playerTownId != null && playerTownId.equals(chunkTownId);
     }
 
     // ==========================================

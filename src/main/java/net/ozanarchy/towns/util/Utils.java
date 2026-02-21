@@ -16,4 +16,8 @@ public class Utils {
         return messagesConfig.getString("prefix");
     }
 
+    public static String adminPrefix(){
+        return messagesConfig.getString("adminprefix");
+    }
+
 }

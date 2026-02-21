@@ -49,7 +49,7 @@ public class ProtectionListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onBreakBlock(BlockBreakEvent e){
         if (e.getBlock().getType() == Material.LODESTONE) {
-            Integer townId = db.getChunkTownId(e.getBlock().getChunk());
+            Integer townId = chunkCache.getTownId(e.getBlock().getChunk());
             if (townId != null) {
                 Location townSpawn = db.getTownSpawn(townId);
                 if (townSpawn != null && townSpawn.getBlock().equals(e.getBlock())) {
@@ -73,7 +73,7 @@ public class ProtectionListener implements Listener {
         Location loc = placedBlock.getLocation();
         
         // Optimize: only check if the chunk is claimed
-        Integer townId = db.getChunkTownId(placedBlock.getChunk());
+        Integer townId = chunkCache.getTownId(placedBlock.getChunk());
         if (townId != null) {
             Location spawnLoc = db.getTownSpawn(townId);
             if (spawnLoc != null && spawnLoc.getWorld().equals(loc.getWorld()) && 
@@ -104,7 +104,7 @@ public class ProtectionListener implements Listener {
                 // Specifically allow interaction with the town Lodestone for non-members (for raiding).
                 if (type == Material.LODESTONE) {
                     // Check if this Lodestone is a town spawn
-                    Integer townId = db.getChunkTownId(block.getChunk());
+                    Integer townId = chunkCache.getTownId(block.getChunk());
                     if (townId != null) {
                         Location townSpawn = db.getTownSpawn(townId);
                         if (townSpawn != null && townSpawn.getBlock().equals(block)) {
@@ -156,7 +156,7 @@ public class ProtectionListener implements Listener {
             
             // Lodestone is not a container, but we allow opening any virtual inventory attached to it
             if (block.getType() == Material.LODESTONE) {
-                Integer tId = db.getChunkTownId(block.getChunk());
+                Integer tId = chunkCache.getTownId(block.getChunk());
                 if (tId != null) {
                     Location townSpawn = db.getTownSpawn(tId);
                     if (townSpawn != null && townSpawn.getBlock().equals(block)) {
@@ -170,7 +170,7 @@ public class ProtectionListener implements Listener {
 
         Chunk chunk = block.getChunk();
 
-        Integer townId = db.getChunkTownId(chunk);
+        Integer townId = chunkCache.getTownId(chunk);
         if (townId == null) return;
 
         if (p.hasPermission("oztowns.admin.protectionbypass")) return;
