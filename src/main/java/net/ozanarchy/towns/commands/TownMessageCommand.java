@@ -19,7 +19,7 @@ import net.ozanarchy.towns.util.Utils;
 public class TownMessageCommand implements CommandExecutor{
     private final TownsPlugin plugin;
     private final DatabaseHandler db;
-    private String prefix = Utils.prefix();
+    private final String prefix = Utils.prefix();
 
     public TownMessageCommand(TownsPlugin plugin, DatabaseHandler db){
         this.plugin = plugin;
@@ -28,12 +28,15 @@ public class TownMessageCommand implements CommandExecutor{
 
     @Override
     public boolean onCommand(CommandSender sender, Command arg1, String arg2, String[] args) {
-        if(!(sender instanceof Player)){
+        if(!(sender instanceof Player p)){
             Bukkit.getLogger().info("Town messaging is only for players.");
             return true;
-        };
-        
-        Player p = (Player) sender;
+        }
+
+        if (args.length == 0) {
+            p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.incorrectusage")));
+            return true;
+        }
 
         townChat(p, args);
 
@@ -55,12 +58,12 @@ public class TownMessageCommand implements CommandExecutor{
                     .map(DatabaseHandler.TownMember::getUuid)
                     .toList();
 
-            StringBuilder messageBuilder = new StringBuilder();
-            for (int i = 0; i < args.length; i++){
-                messageBuilder.append(args[i]).append(" ");
+            String msg = String.join(" ", args).trim();
+            if (msg.isEmpty()) {
+                Bukkit.getScheduler().runTask(plugin, () ->
+                        p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.incorrectusage"))));
+                return;
             }
-
-            String msg = messageBuilder.toString().trim();
             
             for (UUID uuid : townMemberUUID) {
                 Player member = Bukkit.getPlayer(uuid);

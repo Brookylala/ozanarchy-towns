@@ -17,9 +17,7 @@ import static net.ozanarchy.towns.TownsPlugin.messagesConfig;
 
 public class AdminCommands implements CommandExecutor, TabCompleter {
     private final AdminEvents adminEvents;
-    private String prefix = Utils.adminPrefix();
-    private String noPerm = messagesConfig.getString("messages.nopermission");
-    private String incorrectUsage = messagesConfig.getString("adminmessages.incorrectusage");
+    private final String prefix = Utils.adminPrefix();
 
     public AdminCommands(AdminEvents adminEvents) {
         this.adminEvents = adminEvents;
@@ -42,7 +40,7 @@ public class AdminCommands implements CommandExecutor, TabCompleter {
     public boolean onCommand(CommandSender sender, Command arg1, String arg2, String[] args) {
         if (sender instanceof Player p) {
             if (!p.hasPermission("oztowns.admin")) {
-                p.sendMessage(Utils.getColor(prefix + noPerm));
+                p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.nopermission")));
                 return true;
             }
         }
@@ -63,7 +61,7 @@ public class AdminCommands implements CommandExecutor, TabCompleter {
             }
             case "delete" -> {
                 if (args.length < 2) {
-                    sender.sendMessage(Utils.getColor(prefix + incorrectUsage));
+                    sender.sendMessage(Utils.getColor(prefix + messagesConfig.getString("adminmessages.incorrectusage")));
                     return true;
                 }
                 adminEvents.deleteTown(sender, args[1]);
@@ -75,7 +73,7 @@ public class AdminCommands implements CommandExecutor, TabCompleter {
                     return true;
                 }
                 if (args.length < 2) {
-                    p.sendMessage(Utils.getColor(prefix + incorrectUsage));
+                    p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("adminmessages.incorrectusage")));
                     return true;
                 }
                 adminEvents.setSpawn(p, args[1]);
@@ -83,7 +81,7 @@ public class AdminCommands implements CommandExecutor, TabCompleter {
             }
             case "removespawn" -> {
                 if (args.length < 2) {
-                    sender.sendMessage(Utils.getColor(prefix + incorrectUsage));
+                    sender.sendMessage(Utils.getColor(prefix + messagesConfig.getString("adminmessages.incorrectusage")));
                     return true;
                 }
                 adminEvents.removeSpawn(sender, args[1]);
@@ -91,7 +89,7 @@ public class AdminCommands implements CommandExecutor, TabCompleter {
             }
             case "add" -> {
                 if (args.length < 3) {
-                    sender.sendMessage(Utils.getColor(prefix + incorrectUsage));
+                    sender.sendMessage(Utils.getColor(prefix + messagesConfig.getString("adminmessages.incorrectusage")));
                     return true;
                 }
                 adminEvents.addMember(sender, args[1], args[2]);
@@ -99,7 +97,7 @@ public class AdminCommands implements CommandExecutor, TabCompleter {
             }
             case "remove" -> {
                 if (args.length < 3) {
-                    sender.sendMessage(Utils.getColor(prefix + incorrectUsage));
+                    sender.sendMessage(Utils.getColor(prefix + messagesConfig.getString("adminmessages.incorrectusage")));
                     return true;
                 }
                 adminEvents.removeMember(sender, args[1], args[2]);
@@ -107,7 +105,7 @@ public class AdminCommands implements CommandExecutor, TabCompleter {
             }
             case "setmayor" -> {
                 if (args.length < 3) {
-                    sender.sendMessage(Utils.getColor(prefix + incorrectUsage));
+                    sender.sendMessage(Utils.getColor(prefix + messagesConfig.getString("adminmessages.incorrectusage")));
                     return true;
                 }
                 adminEvents.setMayor(sender, args[1], args[2]);
@@ -115,7 +113,7 @@ public class AdminCommands implements CommandExecutor, TabCompleter {
             }
             case "spawn" -> {
                 if (args.length < 2){
-                    sender.sendMessage(Utils.getColor(prefix + incorrectUsage));
+                    sender.sendMessage(Utils.getColor(prefix + messagesConfig.getString("adminmessages.incorrectusage")));
                     return true;
                 }
                 if (sender instanceof Player p){

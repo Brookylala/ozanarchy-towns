@@ -53,6 +53,54 @@ public class DatabaseHandler {
         expiresAtMap.put(key, System.currentTimeMillis() + CACHE_TTL_MS);
     }
 
+    private String chunkKey(Chunk chunk) {
+        return chunk.getWorld().getName() + ":" + chunk.getX() + ":" + chunk.getZ();
+    }
+
+    private void cacheTownIdentity(int townId, String townName) {
+        if (townName == null) {
+            return;
+        }
+        String normalized = townName.toLowerCase();
+        long expiresAt = System.currentTimeMillis() + CACHE_TTL_MS;
+        townNameByIdCache.put(townId, townName);
+        townNameByIdCacheExpiresAt.put(townId, expiresAt);
+        townIdByNameCache.put(normalized, townId);
+        townIdByNameCacheExpiresAt.put(normalized, expiresAt);
+    }
+
+    private void cacheTownSpawn(int townId, Location location) {
+        if (location == null) {
+            townSpawnCache.remove(townId);
+            townSpawnCacheExpiresAt.remove(townId);
+            return;
+        }
+        townSpawnCache.put(townId, location);
+        townSpawnCacheExpiresAt.put(townId, System.currentTimeMillis() + CACHE_TTL_MS);
+    }
+
+    private void cacheMemberContext(UUID uuid, int townId, String role) {
+        cacheWithTtl(playerTownCache, playerTownCacheExpiresAt, uuid, townId);
+        if (role != null) {
+            memberRoleCache.put(uuid, role);
+            memberRoleCacheExpiresAt.put(uuid, System.currentTimeMillis() + CACHE_TTL_MS);
+        }
+    }
+
+    private void invalidatePermissionCacheForTown(int townId) {
+        PermissionManager permissionManager = plugin.getPermissionManager();
+        if (permissionManager != null) {
+            permissionManager.invalidateTown(townId);
+        }
+    }
+
+    private void invalidatePermissionCacheForMember(int townId, UUID uuid) {
+        PermissionManager permissionManager = plugin.getPermissionManager();
+        if (permissionManager != null) {
+            permissionManager.invalidateMember(townId, uuid);
+        }
+    }
+
     private void invalidatePlayerTown(UUID uuid) {
         playerTownCache.remove(uuid);
         playerTownCacheExpiresAt.remove(uuid);
@@ -118,7 +166,7 @@ public class DatabaseHandler {
             stmt.setInt(3, chunk.getZ());
             stmt.setInt(4, townID);
             stmt.executeUpdate();
-            claimTownCache.put(chunk.getWorld().getName() + ":" + chunk.getX() + ":" + chunk.getZ(), townID);
+            claimTownCache.put(chunkKey(chunk), townID);
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -128,7 +176,7 @@ public class DatabaseHandler {
      * Gets the town ID associated with a specific chunk.
      */
     public Integer getChunkTownId(Chunk chunk) {
-        String key = chunk.getWorld().getName() + ":" + chunk.getX() + ":" + chunk.getZ();
+        String key = chunkKey(chunk);
         Integer cachedTownId = claimTownCache.get(key);
         if (cachedTownId != null) {
             return cachedTownId;
@@ -176,7 +224,7 @@ public class DatabaseHandler {
 
             boolean removed = stmt.executeUpdate() > 0;
             if (removed) {
-                claimTownCache.remove(chunk.getWorld().getName() + ":" + chunk.getX() + ":" + chunk.getZ());
+                claimTownCache.remove(chunkKey(chunk));
             }
             return removed;
         } catch (SQLException e) {
@@ -290,10 +338,7 @@ public class DatabaseHandler {
             try(ResultSet rs = stmt.getGeneratedKeys()) {
                 if(rs.next()){
                     int townId = rs.getInt(1);
-                    townNameByIdCache.put(townId, name);
-                    townNameByIdCacheExpiresAt.put(townId, System.currentTimeMillis() + CACHE_TTL_MS);
-                    townIdByNameCache.put(name.toLowerCase(), townId);
-                    townIdByNameCacheExpiresAt.put(name.toLowerCase(), System.currentTimeMillis() + CACHE_TTL_MS);
+                    cacheTownIdentity(townId, name);
                     return townId;
                 }
             }
@@ -308,6 +353,7 @@ public class DatabaseHandler {
         String sql = "DELETE FROM towns WHERE id=?";
 
         try(PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)) {
+            deleteTownPermissions(townId);
             stmt.setInt(1, townId);
             stmt.executeUpdate();
             invalidateTownIdentity(townId);
@@ -347,12 +393,7 @@ public class DatabaseHandler {
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
                     String name = rs.getString("name");
-                    if (name != null) {
-                        townNameByIdCache.put(townId, name);
-                        townNameByIdCacheExpiresAt.put(townId, System.currentTimeMillis() + CACHE_TTL_MS);
-                        townIdByNameCache.put(name.toLowerCase(), townId);
-                        townIdByNameCacheExpiresAt.put(name.toLowerCase(), System.currentTimeMillis() + CACHE_TTL_MS);
-                    }
+                    cacheTownIdentity(townId, name);
                     return name;
                 }
             }
@@ -435,13 +476,11 @@ public class DatabaseHandler {
             stmt.setInt(5, townId);
             stmt.executeUpdate();
             if (world == null) {
-                townSpawnCache.remove(townId);
-                townSpawnCacheExpiresAt.remove(townId);
+                cacheTownSpawn(townId, null);
             } else {
                 org.bukkit.World bukkitWorld = org.bukkit.Bukkit.getWorld(world);
                 if (bukkitWorld != null) {
-                    townSpawnCache.put(townId, new Location(bukkitWorld, x, y, z));
-                    townSpawnCacheExpiresAt.put(townId, System.currentTimeMillis() + CACHE_TTL_MS);
+                    cacheTownSpawn(townId, new Location(bukkitWorld, x, y, z));
                 }
             }
         } catch (SQLException e) {
@@ -480,8 +519,7 @@ public class DatabaseHandler {
                     org.bukkit.World world = org.bukkit.Bukkit.getWorld(worldName);
                     if (world == null) return null;
                     org.bukkit.Location location = new org.bukkit.Location(world, rs.getDouble("spawn_x"), rs.getDouble("spawn_y"), rs.getDouble("spawn_z"));
-                    townSpawnCache.put(townId, location);
-                    townSpawnCacheExpiresAt.put(townId, System.currentTimeMillis() + CACHE_TTL_MS);
+                    cacheTownSpawn(townId, location);
                     return location;
                 }
             }
@@ -501,10 +539,7 @@ public class DatabaseHandler {
             stmt.setInt(2, townId);
             stmt.executeUpdate();
             invalidateTownIdentity(townId);
-            townNameByIdCache.put(townId, name);
-            townNameByIdCacheExpiresAt.put(townId, System.currentTimeMillis() + CACHE_TTL_MS);
-            townIdByNameCache.put(name.toLowerCase(), townId);
-            townIdByNameCacheExpiresAt.put(name.toLowerCase(), System.currentTimeMillis() + CACHE_TTL_MS);
+            cacheTownIdentity(townId, name);
         } catch(SQLException e){
             e.printStackTrace();
         }
@@ -529,9 +564,7 @@ public class DatabaseHandler {
             stmt.setString(3, role);
             boolean added = stmt.executeUpdate() > 0;
             if (added) {
-                cacheWithTtl(playerTownCache, playerTownCacheExpiresAt, uuid, townId);
-                memberRoleCache.put(uuid, role);
-                memberRoleCacheExpiresAt.put(uuid, System.currentTimeMillis() + CACHE_TTL_MS);
+                cacheMemberContext(uuid, townId, role);
                 invalidateTownMembers(townId);
             }
             return added;
@@ -616,9 +649,7 @@ public class DatabaseHandler {
             stmt.setInt(3, townId);
             boolean updated = stmt.executeUpdate() > 0;
             if (updated) {
-                cacheWithTtl(playerTownCache, playerTownCacheExpiresAt, uuid, townId);
-                memberRoleCache.put(uuid, role);
-                memberRoleCacheExpiresAt.put(uuid, System.currentTimeMillis() + CACHE_TTL_MS);
+                cacheMemberContext(uuid, townId, role);
                 invalidateTownMembers(townId);
             }
             return updated;
@@ -651,6 +682,7 @@ public class DatabaseHandler {
             stmt.setInt(2, townId);
             boolean removed = stmt.executeUpdate() > 0;
             if (removed) {
+                deleteMemberPermissions(townId, uuid);
                 invalidatePlayerTown(uuid);
                 invalidateTownMembers(townId);
             }
@@ -687,9 +719,7 @@ public class DatabaseHandler {
                     try {
                         UUID memberUuid = UUID.fromString(uuidStr);
                         members.add(new TownMember(memberUuid, role));
-                        cacheWithTtl(playerTownCache, playerTownCacheExpiresAt, memberUuid, townId);
-                        memberRoleCache.put(memberUuid, role);
-                        memberRoleCacheExpiresAt.put(memberUuid, System.currentTimeMillis() + CACHE_TTL_MS);
+                        cacheMemberContext(memberUuid, townId, role);
                     } catch (IllegalArgumentException ignored) {
                         // Skip malformed UUIDs
                     }
@@ -719,20 +749,53 @@ public class DatabaseHandler {
      * Sets a new mayor for a town.
      */
     public boolean setMayor(UUID uuid, int townId) {
-        String sql = """
+        String readCurrentMayorsSql = """
+            SELECT uuid
+            FROM town_members
+            WHERE town_id = ? AND role = 'MAYOR'
+        """;
+        String demoteCurrentMayorsSql = """
+            UPDATE town_members
+            SET role='OFFICER'
+            WHERE town_id=? AND role='MAYOR'
+        """;
+        String promoteTargetSql = """
             UPDATE town_members
             SET role='MAYOR'
             WHERE uuid=? AND town_id=?
         """;
 
-        try (PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)) {
-            stmt.setString(1, uuid.toString());
-            stmt.setInt(2, townId);
-            boolean updated = stmt.executeUpdate() > 0;
+        List<UUID> previousMayors = new ArrayList<>();
+        try (PreparedStatement readStmt = plugin.getConnection().prepareStatement(readCurrentMayorsSql)) {
+            readStmt.setInt(1, townId);
+            try (ResultSet rs = readStmt.executeQuery()) {
+                while (rs.next()) {
+                    try {
+                        previousMayors.add(UUID.fromString(rs.getString("uuid")));
+                    } catch (IllegalArgumentException ignored) {
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+
+        try (PreparedStatement demoteStmt = plugin.getConnection().prepareStatement(demoteCurrentMayorsSql);
+             PreparedStatement promoteStmt = plugin.getConnection().prepareStatement(promoteTargetSql)) {
+            demoteStmt.setInt(1, townId);
+            demoteStmt.executeUpdate();
+
+            promoteStmt.setString(1, uuid.toString());
+            promoteStmt.setInt(2, townId);
+            boolean updated = promoteStmt.executeUpdate() > 0;
             if (updated) {
-                cacheWithTtl(playerTownCache, playerTownCacheExpiresAt, uuid, townId);
-                memberRoleCache.put(uuid, "MAYOR");
-                memberRoleCacheExpiresAt.put(uuid, System.currentTimeMillis() + CACHE_TTL_MS);
+                for (UUID previousMayor : previousMayors) {
+                    cacheMemberContext(previousMayor, townId, "OFFICER");
+                    deleteMemberPermissions(townId, previousMayor);
+                }
+                cacheMemberContext(uuid, townId, "MAYOR");
+                deleteMemberPermissions(townId, uuid);
                 invalidateTownMembers(townId);
             }
             return updated;
@@ -789,6 +852,7 @@ public class DatabaseHandler {
             List<TownMember> existingMembers = getTownMembers(townId);
             stmt.setInt(1, townId);
             stmt.executeUpdate();
+            deleteTownPermissions(townId);
             for (TownMember member : existingMembers) {
                 invalidatePlayerTown(member.getUuid());
             }
@@ -975,5 +1039,28 @@ public class DatabaseHandler {
         WHERE UNIX_TIMESTAMP(NOW()) - UNIX_TIMESTAMP(tb.last_upkeep) >= tb.upkeep_interval
     """;
         return plugin.getConnection().prepareStatement(sql).executeQuery();
+    }
+
+    public void deleteTownPermissions(int townId) {
+        String sql = "DELETE FROM town_member_permissions WHERE town_id=?";
+        try (PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)) {
+            stmt.setInt(1, townId);
+            stmt.executeUpdate();
+            invalidatePermissionCacheForTown(townId);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void deleteMemberPermissions(int townId, UUID playerUuid) {
+        String sql = "DELETE FROM town_member_permissions WHERE town_id=? AND player_uuid=?";
+        try (PreparedStatement stmt = plugin.getConnection().prepareStatement(sql)) {
+            stmt.setInt(1, townId);
+            stmt.setString(2, playerUuid.toString());
+            stmt.executeUpdate();
+            invalidatePermissionCacheForMember(townId, playerUuid);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
     }
 }

@@ -12,10 +12,12 @@ import net.ozanarchy.towns.events.ProtectionListener;
 import net.ozanarchy.towns.events.TownEvents;
 import net.ozanarchy.towns.handlers.ChunkHandler;
 import net.ozanarchy.towns.handlers.DatabaseHandler;
+import net.ozanarchy.towns.handlers.PermissionManager;
 import net.ozanarchy.towns.util.TownsPlaceholder;
 import net.ozanarchy.towns.gui.MainGui;
 import net.ozanarchy.towns.gui.BankGui;
 import net.ozanarchy.towns.gui.MembersGui;
+import net.ozanarchy.towns.gui.MemberPermissionMenu;
 import org.bukkit.Bukkit;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -29,42 +31,63 @@ import java.util.Map;
 
 public final class TownsPlugin extends JavaPlugin {
     private Connection connection;
-    public String host, database, username, password, table;
-    public  int port;
+    private String host;
+    private String database;
+    private String username;
+    private String password;
+    private int port;
     public static FileConfiguration config;
     public static FileConfiguration guiConfig;
     public static FileConfiguration messagesConfig;
+    public static FileConfiguration hologramsConfig;
     private EconomyAPI economy;
     private final ChunkHandler chunkCache = new ChunkHandler();
+    private PermissionManager permissionManager;
 
     @Override
     public void onEnable() {
-        //Config
-        config = getConfig();
-        getConfig().options().copyDefaults(true);
-        saveDefaultConfig();
-        loadGuiConfig();
-        loadMessagesConfig();
-        applyCacheSettings();
-        //Economy Enabled?
+        initializeConfigs();
         economy = Bukkit.getServicesManager().load(EconomyAPI.class);
-
         if (economy == null) {
             getLogger().severe("Economy API not found! Disabling.");
             Bukkit.getPluginManager().disablePlugin(this);
+            return;
         }
 
-        // Initialize handlers
         DatabaseHandler db = new DatabaseHandler(this);
-        TownEvents claim = new TownEvents(db, this, economy, chunkCache);
-        MemberEvents memberEvents = new MemberEvents(db, this, economy, chunkCache);
+        permissionManager = new PermissionManager(this);
+        TownEvents townEvents = new TownEvents(db, permissionManager, this, economy, chunkCache);
+        MemberEvents memberEvents = new MemberEvents(db, permissionManager, this, economy, chunkCache);
         AdminEvents adminEvents = new AdminEvents(db, this);
 
-        // Register commands
         MainGui mainGui = new MainGui(this);
         BankGui bankGui = new BankGui(this);
-        MembersGui membersGui = new MembersGui(this, db);
-        TownsCommand townsCommand = new TownsCommand(db, claim, memberEvents, mainGui, membersGui);
+        MembersGui membersGui = new MembersGui(this, db, permissionManager);
+        registerCommands(db, townEvents, memberEvents, adminEvents, mainGui, bankGui, membersGui);
+        registerEvents(db, townEvents, memberEvents, mainGui, bankGui, membersGui);
+
+        setupMySql();
+        createTables();
+
+        registerPlaceholders(db);
+        scheduleChunkCacheReload();
+        scheduleUpkeepHandler(db, townEvents);
+        scheduleSpawnReminderAndDeletion(db, townEvents);
+    }
+
+    private void initializeConfigs() {
+        config = getConfig();
+        config.options().copyDefaults(true);
+        saveDefaultConfig();
+        guiConfig = loadYamlConfig("gui.yml");
+        messagesConfig = loadYamlConfig("messages.yml");
+        hologramsConfig = loadYamlConfig("holograms.yml");
+        applyCacheSettings();
+    }
+
+    private void registerCommands(DatabaseHandler db, TownEvents townEvents, MemberEvents memberEvents, AdminEvents adminEvents,
+                                  MainGui mainGui, BankGui bankGui, MembersGui membersGui) {
+        TownsCommand townsCommand = new TownsCommand(db, townEvents, memberEvents, mainGui, membersGui);
         getCommand("towns").setExecutor(townsCommand);
         getCommand("towns").setTabCompleter(townsCommand);
 
@@ -76,58 +99,58 @@ public final class TownsPlugin extends JavaPlugin {
         getCommand("townadmin").setExecutor(adminCommands);
         getCommand("townadmin").setTabCompleter(adminCommands);
 
-        if(config.getBoolean("townmessages")){
-            getCommand("tm").setExecutor(new TownMessageCommand(this, db));    
+        if (config.getBoolean("townmessages")) {
+            getCommand("tm").setExecutor(new TownMessageCommand(this, db));
         }
+    }
 
-        // Register events
-        getServer().getPluginManager().registerEvents(claim, this);
+    private void registerEvents(DatabaseHandler db, TownEvents townEvents, MemberEvents memberEvents,
+                                MainGui mainGui, BankGui bankGui, MembersGui membersGui) {
+        getServer().getPluginManager().registerEvents(townEvents, this);
         getServer().getPluginManager().registerEvents(memberEvents, this);
-        getServer().getPluginManager().registerEvents(new ProtectionListener(this, db ,chunkCache), this);
+        getServer().getPluginManager().registerEvents(new ProtectionListener(this, db, chunkCache, permissionManager), this);
         getServer().getPluginManager().registerEvents(new LockPickListener(this, db, economy), this);
         getServer().getPluginManager().registerEvents(mainGui, this);
         getServer().getPluginManager().registerEvents(bankGui, this);
         getServer().getPluginManager().registerEvents(membersGui, this);
+        getServer().getPluginManager().registerEvents(new MemberPermissionMenu(this, db, permissionManager, null), this);
+    }
 
-        //MySQL
-        setupMySql();
-        createTables();
-
-        //PlaceHolderApi Enabled?
+    private void registerPlaceholders(DatabaseHandler db) {
         if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
             new TownsPlaceholder(this, db).register();
             getLogger().info("PlaceholderAPI Enabled");
         }
+    }
 
-        // Load chunk cache once at startup, then refresh periodically.
+    private void scheduleChunkCacheReload() {
         reloadChunkCache();
-
-        //Reload chunk info
         Bukkit.getScheduler().runTaskTimerAsynchronously(this, this::reloadChunkCache, 300L, 300L);
+    }
 
-        //Upkeep Handler
+    private void scheduleUpkeepHandler(DatabaseHandler db, TownEvents townEvents) {
         Bukkit.getScheduler().runTaskTimerAsynchronously(this, () -> {
-            try (ResultSet rs = db.getTownsNeedingUpkeep()){
-                while (rs.next()){
+            try (ResultSet rs = db.getTownsNeedingUpkeep()) {
+                while (rs.next()) {
                     int townId = rs.getInt("town_id");
                     double cost = rs.getDouble("upkeep_cost");
-
                     boolean paid = db.withdrawTownMoney(townId, cost);
-
-                    if(paid){
+                    if (paid) {
                         db.updateLastUpkeep(townId);
-                        claim.notifyTown(townId, messagesConfig.getString("messages.upkeepsuccess").replace("{cost}", String.valueOf(cost)));
+                        townEvents.notifyTown(townId, messagesConfig.getString("messages.upkeepsuccess").replace("{cost}", String.valueOf(cost)));
                     } else {
-                        claim.notifyTown(townId, messagesConfig.getString("messages.upkeepoverdue"));
+                        townEvents.notifyTown(townId, messagesConfig.getString("messages.upkeepoverdue"));
                     }
                 }
             } catch (SQLException e) {
                 e.printStackTrace();
             }
-
         }, 0L, 20 * 60 * 15);
+    }
 
-        // Town Spawn Reminder & Deletion Handler
+    private void scheduleSpawnReminderAndDeletion(DatabaseHandler db, TownEvents townEvents) {
+        long maxAgeMinutes = config.getLong("spawn-reminder.max-age-minutes", 60);
+        long intervalMinutes = config.getLong("spawn-reminder.reminder-interval-minutes", 5);
         Bukkit.getScheduler().runTaskTimerAsynchronously(this, () -> {
             try (ResultSet rs = db.getTownsWithoutSpawn()) {
                 while (rs.next()) {
@@ -136,30 +159,24 @@ public final class TownsPlugin extends JavaPlugin {
                     long ageSeconds = db.getTownAgeInSeconds(townId);
                     long ageMinutes = ageSeconds / 60;
 
-                    long maxAgeMinutes = config.getLong("spawn-reminder.max-age-minutes", 60);
-                    long intervalMinutes = config.getLong("spawn-reminder.reminder-interval-minutes", 5);
-
                     if (ageMinutes >= maxAgeMinutes) {
-                        // Delete town
                         Bukkit.getScheduler().runTask(this, () -> {
-                            claim.abandonTown(townId);
+                            townEvents.abandonTown(townId);
                             getLogger().info("Town " + townName + " deleted for not setting spawn within " + maxAgeMinutes + " minutes.");
                         });
                     } else if (ageMinutes > 0 && ageMinutes % intervalMinutes == 0 && ageSeconds % 60 < 20) {
-                        // Notify town - added a small window check to avoid missing it if seconds are slightly off, 
-                        // though runTaskTimer 20*60L should be precise enough.
                         String msg = messagesConfig.getString("messages.setspawnreminder")
                                 .replace("{minutes}", String.valueOf(maxAgeMinutes - ageMinutes));
-                        claim.notifyTown(townId, msg);
+                        townEvents.notifyTown(townId, msg);
                     }
                 }
             } catch (SQLException e) {
                 e.printStackTrace();
             }
-        }, 20 * 30L, 20 * 60L); // Start in 30 seconds, run every 1 minute
+        }, 20 * 30L, 20 * 60L);
     }
 
-    public void setupMySql(){
+    public void setupMySql() {
         host = config.getString("mysql.host");
         port = config.getInt("mysql.port");
         username = config.getString("mysql.username");
@@ -168,9 +185,7 @@ public final class TownsPlugin extends JavaPlugin {
 
         try {
             connectMySql();
-        } catch (SQLException e) {
-            e.printStackTrace();
-        } catch (ClassNotFoundException e) {
+        } catch (SQLException | ClassNotFoundException e) {
             e.printStackTrace();
         }
     }
@@ -234,7 +249,18 @@ public final class TownsPlugin extends JavaPlugin {
                     "FOREIGN KEY (town_id) REFERENCES towns(id) ON DELETE CASCADE" + // Automatically delete bank when a town is deleted
                     ")";
             stmt.executeUpdate(townBank);
-            
+
+            // Member Permissions table: Stores individual player permissions within towns
+            String memberPermissions = "CREATE TABLE IF NOT EXISTS town_member_permissions (" +
+                    "town_id INT NOT NULL," +
+                    "player_uuid VARCHAR(36) NOT NULL," +
+                    "permission_node VARCHAR(50) NOT NULL," +
+                    "value BOOLEAN NOT NULL DEFAULT FALSE," +
+                    "PRIMARY KEY (town_id, player_uuid, permission_node)," +
+                    "FOREIGN KEY (town_id) REFERENCES towns(id) ON DELETE CASCADE" +
+                    ")";
+            stmt.executeUpdate(memberPermissions);
+
             // Database migrations: ensure legacy tables have the required columns
             try {
                 stmt.executeUpdate("ALTER TABLE towns ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
@@ -265,6 +291,10 @@ public final class TownsPlugin extends JavaPlugin {
         return connection;
     }
 
+    public PermissionManager getPermissionManager() {
+        return permissionManager;
+    }
+
     public void setConnection(Connection connection) {
         this.connection = connection;
     }
@@ -276,47 +306,34 @@ public final class TownsPlugin extends JavaPlugin {
         chunkCache.setAll(claims);
     }
 
-    private void loadGuiConfig() {
-        File guiConfigFile = new File(getDataFolder(), "gui.yml");
-        if (!guiConfigFile.exists()) {
-            guiConfigFile.getParentFile().mkdirs();
-            saveResource("gui.yml", false);
+    private FileConfiguration loadYamlConfig(String fileName) {
+        File configFile = new File(getDataFolder(), fileName);
+        if (!configFile.exists()) {
+            configFile.getParentFile().mkdirs();
+            saveResource(fileName, false);
         }
-
-        guiConfig = new YamlConfiguration();
+        YamlConfiguration yaml = new YamlConfiguration();
         try {
-            guiConfig.load(guiConfigFile);
+            yaml.load(configFile);
         } catch (IOException | InvalidConfigurationException e) {
             e.printStackTrace();
         }
-    }
-
-    private void loadMessagesConfig() {
-        File messagesFile = new File(getDataFolder(), "messages.yml");
-        if (!messagesFile.exists()) {
-            messagesFile.getParentFile().mkdirs();
-            saveResource("messages.yml", false);
-        }
-
-        messagesConfig = new YamlConfiguration();
-        try {
-            messagesConfig.load(messagesFile);
-        } catch (IOException | InvalidConfigurationException e) {
-            e.printStackTrace();
-        }
+        return yaml;
     }
 
     public void reloadAllConfigs() {
         reloadConfig();
         config = getConfig();
-        loadGuiConfig();
-        loadMessagesConfig();
+        guiConfig = loadYamlConfig("gui.yml");
+        messagesConfig = loadYamlConfig("messages.yml");
+        hologramsConfig = loadYamlConfig("holograms.yml");
         applyCacheSettings();
     }
 
     private void applyCacheSettings() {
         long ttlSeconds = config.getLong("cache.ttl-seconds", 15L);
         DatabaseHandler.setCacheTtlSeconds(ttlSeconds);
+        PermissionManager.setCacheTtlSeconds(ttlSeconds);
     }
 
     @Override
@@ -329,3 +346,5 @@ public final class TownsPlugin extends JavaPlugin {
         }
     }
 }
+
+

@@ -18,9 +18,7 @@ import static net.ozanarchy.towns.TownsPlugin.messagesConfig;
 public class TownBankCommands implements CommandExecutor, TabCompleter {
     private final MemberEvents mEvents;
     private final BankGui gui;
-    private String prefix = Utils.prefix();
-    private String noPerm = messagesConfig.getString("messages.nopermission");
-    private String incorrectUsage = messagesConfig.getString("messages.incorrectusage");
+    private final String prefix = Utils.prefix();
 
     public TownBankCommands(MemberEvents mEvents, BankGui gui) {
         this.mEvents = mEvents;
@@ -28,11 +26,10 @@ public class TownBankCommands implements CommandExecutor, TabCompleter {
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command command, String s, String[] args) {
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         // Bank actions are player-only.
         if(!(sender instanceof Player p)) return true;
-        if(!p.hasPermission("oztowns.commands.bank") || !p.hasPermission("oztowns.commands")){
-            p.sendMessage(Utils.getColor(prefix + noPerm));
+        if(!hasPermission(p, "oztowns.commands") || !hasPermission(p, "oztowns.commands.bank")){
             return true;
         }
         if(args.length < 1){
@@ -47,32 +44,28 @@ public class TownBankCommands implements CommandExecutor, TabCompleter {
                 return true;
             }
             case "deposit" -> {
-                if(!(p.hasPermission("oztowns.commands.bank.deposit"))){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if(!hasPermission(p, "oztowns.commands.bank.deposit")){
                     return true;
                 }
                 mEvents.giveTownMoney(p, args);
                 return true;
             }
             case "withdraw" -> {
-                if(!(p.hasPermission("oztowns.commands.bank.withdraw"))){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if(!hasPermission(p, "oztowns.commands.bank.withdraw")){
                     return true;
                 }
                 mEvents.withdrawTownMoney(p, args);
                 return true;
             }
             case "balance", "bal" -> {
-                if(!(p.hasPermission("oztowns.commands.bank.balance"))){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if(!hasPermission(p, "oztowns.commands.bank.balance")){
                     return true;
                 }
                 mEvents.townBalance(p);
                 return true;
             }
             case "help", "commands" -> {
-                if(!(p.hasPermission("oztowns.commands.bank.help"))){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if(!hasPermission(p, "oztowns.commands.bank.help")){
                     return true;
                 }
                 helpCommand(p);
@@ -104,5 +97,13 @@ public class TownBankCommands implements CommandExecutor, TabCompleter {
         for (String line : messagesConfig.getStringList("bankhelp")){
             p.sendMessage(Utils.getColor(line));
         }
+    }
+
+    private boolean hasPermission(Player player, String permission) {
+        if (player.hasPermission(permission)) {
+            return true;
+        }
+        player.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.nopermission")));
+        return false;
     }
 }

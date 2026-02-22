@@ -1,115 +1,81 @@
-# OzAnarchy Towns
+# ozanarchy-towny
 
-Town and land-claim plugin for Paper/Spigot `1.21.x` with chunk protection, ranks, town bank, spawn flow, and raid/takeover mechanics.
+A Spigot/Paper towns plugin for **Minecraft 1.21.11** with chunk claims, town roles, bank/upkeep, spawn management, GUI menus, and optional PlaceholderAPI/DecentHolograms integration.
 
 ## Features
 
-- Town lifecycle: create, rename, transfer mayor, abandon.
-- Land claiming with adjacency checks and unclaim support.
-- Member management: invite/add, accept/deny, remove, promote, demote, leave.
-- Town spawn system with delayed teleport and movement cancellation.
-- Spawn reminder + automatic cleanup for towns that never set a spawn.
-- Town bank support (deposit, withdraw, balance) with scheduled upkeep.
-- Chunk protection for block place/break/interactions and explosion rules.
-- Raid/takeover integration with `OminousChestLock`.
-- Chunk visualizer for own/enemy/wilderness claims.
-- Optional PlaceholderAPI integration.
-- GUI menus for towns, members, and bank.
-- Optional town chat command (`/tm`) when enabled in config.
+- Town lifecycle: create, rename, set mayor, leave, abandon
+- Chunk claiming with adjacency checks and unclaim restrictions
+- Role system: mayor/officer/member + member permission nodes
+- Town bank with deposits, withdrawals, balance, upkeep billing
+- Spawn system with delay, cooldown, and automatic reminders/deletion for towns without spawn
+- Raiding system: lockpick enemy town Lodestone, survive raid timer, and take town rewards
+- GUI support for main menu, bank, members, and member permissions
+- Chunk visualizer particles for own/enemy/wilderness claims
+- Optional town chat command (`/tm`)
+- Optional PlaceholderAPI placeholders and DecentHolograms spawn holograms
+
+## Raiding
+
+- Raids are triggered by successfully lockpicking a **town spawn Lodestone**.
+- Raiders must survive for **60 seconds** to complete the raid.
+- Raid fails if the raider takes damage, dies, or disconnects.
+- On success:
+  - If the raider is in a town, raided bank funds transfer to the raider town bank.
+  - If the raider is not in a town, funds are paid directly to the player.
+  - The raided town is deleted (claims, members, bank, and town data).
+- Players cannot raid their own town Lodestone.
+- Raider and defenders get raid bossbars (`bossbar.raid.*` in `config.yml`).
 
 ## Requirements
 
-- Java `21`
-- Paper/Spigot API `1.21.x`
-- MySQL
+- Java **21**
+- Spigot/Paper API **1.21.11**
+- MySQL database
 - Required plugins:
   - `ozanarchy-economy`
   - `OminousChestLock`
-- Optional plugin:
+- Optional plugins:
   - `PlaceholderAPI`
+  - `DecentHolograms`
 
-## Build
+## Installation
+
+1. Build the plugin jar (or use your release jar).
+2. Put the jar in your server `plugins/` folder.
+3. Ensure required dependencies are installed.
+4. Start the server once to generate configs.
+5. Edit `plugins/ozanarchy-towns/config.yml` with your MySQL credentials.
+6. Restart server.
+
+## Build (Maven)
 
 ```bash
 mvn clean package
 ```
 
-Output jar:
-
-- `target/ozanarchy-towns-1.0.jar`
-
-## Installation
-
-1. Build the plugin.
-2. Copy `target/ozanarchy-towns-1.0.jar` to your server `plugins/` directory.
-3. Start the server once to generate default config files.
-4. Edit `plugins/ozanarchy-towns/config.yml` and set MySQL credentials:
-   - `mysql.host`
-   - `mysql.port`
-   - `mysql.database`
-   - `mysql.username`
-   - `mysql.password`
-5. Restart the server.
+Outputs are created in `target/`.
 
 ## Commands
 
-### Town Commands (`/towns`)
+- `/towns` (`/town`, `/oztowns`, `/towny`)
+- `/townbank` (`/tbank`, `/townsbank`)
+- `/townadmin` (`/tadmin`)
+- `/tm <message>`
 
-Aliases: `/town`, `/oztowns`, `/towny`
-
-- `/towns` or `/towns gui`
-- `/towns help [1-2]` (alias: `commands`)
-- `/towns create <name>`
-- `/towns rename <newName>`
-- `/towns abandon confirm`
-- `/towns claim`
-- `/towns unclaim`
-- `/towns setspawn`
-- `/towns spawn`
-- `/towns add <player>` (alias: `invite`)
-- `/towns accept`
-- `/towns deny`
-- `/towns remove <player>`
-- `/towns promote <player>`
-- `/towns demote <player>`
-- `/towns setmayor <player>`
-- `/towns leave`
-- `/towns members`
-- `/towns visualizer` (alias: `chunks`)
-
-### Bank Commands (`/townbank`)
-
-Aliases: `/tbank`, `/townsbank`
-
-- `/townbank` or `/townbank gui`
-- `/townbank deposit <amount>`
-- `/townbank withdraw <amount>`
-- `/townbank balance` (alias: `bal`)
-- `/townbank help` (alias: `commands`)
-
-### Admin Commands (`/townadmin`)
-
-Alias: `/tadmin`
-
-- `/townadmin help`
-- `/townadmin reload`
-- `/townadmin delete <town>`
-- `/townadmin spawn <town>` (teleport to town spawn)
-- `/townadmin setspawn <town>`
-- `/townadmin removespawn <town>`
-- `/townadmin add <town> <player>`
-- `/townadmin remove <town> <player>`
-- `/townadmin setmayor <town> <player>`
-
-### Town Chat
-
-- `/tm <message>` (registered when `townmessages: true` in `config.yml`)
+Use `/towns help`, `/townbank help`, and `/townadmin help` in-game for detailed subcommands.
 
 ## Permissions
 
-### Player
+Main:
 
 - `oztowns.commands`
+- `oztowns.commands.bank`
+- `oztowns.admin`
+- `oztowns.admin.protectionbypass`
+
+Town command nodes:
+
 - `oztowns.commands.create`
 - `oztowns.commands.rename`
 - `oztowns.commands.setspawn`
@@ -125,45 +91,47 @@ Alias: `/tadmin`
 - `oztowns.commands.members`
 - `oztowns.commands.transfer`
 - `oztowns.commands.visualizer`
-- `oztowns.commands.help` (checked by `/towns help` and `/towns commands`)
-- `oztowns.commands.bank`
+
+Bank nodes:
+
 - `oztowns.commands.bank.deposit`
 - `oztowns.commands.bank.withdraw`
 - `oztowns.commands.bank.balance`
 - `oztowns.commands.bank.help`
 
-### Admin
+## Configuration
 
-- `oztowns.admin` (default: `op`)
-- `oztowns.admin.protectionbypass` (default: `op`)
+Primary config: `src/main/resources/config.yml`
 
-## Configuration Highlights
+Important sections:
 
-From `config.yml`:
+- `mysql.*` database connection
+- `townmessages` and `townusercolor`
+- `spawn-reminder.*`
+- `town-creation-command`
+- `spawn-delay`
+- `cache.ttl-seconds`
+- `towns.*` cost/upkeep values
+- `unclaimable-worlds`
+- `visualizer.*`
+- `blacklisted-names`
 
-- `townmessages`: enable/disable `/tm` town chat.
-- `townusercolor`: name color in town chat.
-- `spawn-delay`: `/towns spawn` delay (seconds).
-- `spawn-reminder.max-age-minutes`: auto-delete threshold when no spawn is set.
-- `spawn-reminder.reminder-interval-minutes`: reminder interval.
-- `town-creation-command`: command run when spawn is set.
-- `towns.createcost`, `towns.claimcost`: economy costs.
-- `towns.addedmemberupkeep`, `towns.refundedmemberupkeep`: member upkeep tuning.
-- `towns.addedclaimupkeep`, `towns.refundedclaimupkeep`: claim upkeep tuning.
-- `towns.setspawntimer`: spawn set cooldown.
-- `unclaimable-worlds`: worlds where claims are blocked.
-- `visualizer.enabled`, `visualizer.duration`, `visualizer.own|enemy|wild`: chunk visualizer settings.
-- `bossbar.town|wilderness|raid`: bossbar display styles.
-- `blacklisted-names`: disallowed town names.
+Other configs:
 
-Other configurable files:
+- `messages.yml` - all user-facing messages/help text
+- `gui.yml` - GUI layouts/items
+- `holograms.yml` - DecentHolograms integration
 
-- `messages.yml`: plugin messages/help text.
-- `gui.yml`: GUI layouts and icons.
+## Placeholder / Hologram Integration
+
+- PlaceholderAPI: auto-registers expansion when plugin is present.
+- DecentHolograms: town spawn holograms update when enabled in config.
 
 ## Notes
 
-- MySQL tables are created automatically on startup.
-- This project targets Paper/Spigot `1.21.x` APIs.
-- `/towns help` and `/towns commands` are both supported and read from `messages.yml`.
-- `/townbank help` and `/townbank commands` are both supported and read from `messages.yml`.
+- This plugin persists data in MySQL and creates required tables on startup.
+- Keep `blacklisted-names` aligned with your community moderation policy.
+
+## License
+
+Add your license here (for example, MIT, GPL-3.0, proprietary, etc.).

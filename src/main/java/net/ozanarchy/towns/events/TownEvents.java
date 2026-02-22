@@ -1,5 +1,7 @@
 package net.ozanarchy.towns.events;
 
+import eu.decentsoftware.holograms.api.DHAPI;
+import me.clip.placeholderapi.PlaceholderAPI;
 import net.ozanarchy.ozanarchyEconomy.api.EconomyAPI;
 import net.ozanarchy.chestlock.ChestLockPlugin;
 import net.ozanarchy.chestlock.lock.LockInfo;
@@ -12,10 +14,12 @@ import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.block.Block;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.boss.BossBar;
+import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.entity.Player;
@@ -24,19 +28,26 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.text.DecimalFormat;
+import java.util.ArrayList;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
 import static net.ozanarchy.towns.TownsPlugin.config;
+import static net.ozanarchy.towns.TownsPlugin.hologramsConfig;
 import static net.ozanarchy.towns.TownsPlugin.messagesConfig;
+
+import net.ozanarchy.towns.handlers.PermissionManager;
 
 public class TownEvents implements Listener {
     private final DatabaseHandler db;
+    private final PermissionManager permissionManager;
     private final TownsPlugin plugin;
     private final EconomyAPI economy;
     private final ChunkHandler chunkCache;
@@ -50,8 +61,9 @@ public class TownEvents implements Listener {
     private final Map<UUID, Long> lastSpawnSet = new HashMap<>();
     private final Map<UUID, Integer> lastTown = new HashMap<>();
 
-    public TownEvents(DatabaseHandler data, TownsPlugin plugin, EconomyAPI economy, ChunkHandler chunkCache){
+    public TownEvents(DatabaseHandler data, PermissionManager permissionManager, TownsPlugin plugin, EconomyAPI economy, ChunkHandler chunkCache){
         this.db = data;
+        this.permissionManager = permissionManager;
         this.plugin = plugin;
         this.economy = economy;
         this.chunkCache = chunkCache;
@@ -66,17 +78,14 @@ public class TownEvents implements Listener {
      */
     public void setSpawn(Player p) {
         UUID uuid = p.getUniqueId();
-        Long lastTime = lastSpawnSet.get(uuid);
         long now = System.currentTimeMillis();
         long cooldown = config.getLong("towns.setspawntimer", 120) * 1000;
-
-        if (lastTime != null && (now - lastTime) < cooldown) {
-            long remaining = (cooldown - (now - lastTime)) / 1000;
+        long remaining = getRemainingSpawnCooldownSeconds(uuid, now, cooldown);
+        if (remaining > 0) {
             p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.pleasewait")).replace("{seconds}", String.valueOf(remaining)));
-          return;
+            return;
         }
-        
-        lastSpawnSet.put(uuid, now);
+
         Location requestedLoc = p.getLocation().clone();
         Chunk requestedChunk = requestedLoc.getChunk();
 
@@ -106,6 +115,7 @@ public class TownEvents implements Listener {
             Location oldLoc = db.getTownSpawn(townId);
 
             Bukkit.getScheduler().runTask(plugin, () -> {
+                lastSpawnSet.put(uuid, now);
                 // Remove old lodestone if it exists
                 if (oldLoc != null) {
                     Block oldBlock = oldLoc.getBlock();
@@ -145,6 +155,7 @@ public class TownEvents implements Listener {
                 block.setType(Material.LODESTONE);
                 loc.getWorld().save(); // Force save the world to ensure Lodestone placement is persistent
                 p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.spawnsetsuccess")));
+                updateTownSpawnHologram(townId, loc, p);
 
                 String command = config.getString("town-creation-command");
                 if (command != null && !command.isEmpty()) {
@@ -268,50 +279,63 @@ public class TownEvents implements Listener {
         UUID uuid = p.getUniqueId();
         double cost = config.getInt("towns.claimcost");
 
-        economy.remove(uuid, cost, success -> {
-            if(!success){
-                p.sendMessage(Utils.getColor(prefix + notEnough));
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            Integer townId = db.getPlayerTownId(uuid);
+            if (townId == null) {
+                Bukkit.getScheduler().runTask(plugin, () ->
+                        p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.notown")))
+                );
                 return;
             }
-            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-                Chunk chunk = p.getLocation().getChunk();
-                if(db.getChunkClaimed(chunk)){
-                    Bukkit.getScheduler().runTask(plugin, () -> {
-                        p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.chunkowned")));
-                    });
-                    economy.add(uuid, cost);
-                    return;
-                }
 
-                Integer townId = db.getPlayerTownId(uuid);
-                if (townId == null) {
-                    economy.add(uuid, cost);
-                    return;
-                }
+            // Check if player has permission to claim
+            boolean canClaim = db.isTownAdmin(uuid, townId) || permissionManager.getPermissionSync(townId, uuid, "CAN_CLAIM");
+            if (!canClaim) {
+                Bukkit.getScheduler().runTask(plugin, () ->
+                        p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.nopermission")))
+                );
+                return;
+            }
 
-                if (db.hasClaims(townId) && !db.isAdjacentClaim(townId, chunk)) {
-                    Bukkit.getScheduler().runTask(plugin, () -> {
-                        p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.disconnectedclaim")));
-                    });
-                    economy.add(uuid, cost);
+            economy.remove(uuid, cost, success -> {
+                if(!success){
+                    p.sendMessage(Utils.getColor(prefix + notEnough));
                     return;
                 }
-                
-                for(String worldName : config.getStringList("unclaimable-worlds")){
-                    if(p.getWorld().getName().equalsIgnoreCase(worldName)){
+                Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                    Chunk chunk = p.getLocation().getChunk();
+                    if(db.getChunkClaimed(chunk)){
                         Bukkit.getScheduler().runTask(plugin, () -> {
-                            p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.unclaimableworld")));
+                            p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.chunkowned")));
                         });
                         economy.add(uuid, cost);
                         return;
                     }
-                }
 
-                db.increaseUpkeep(townId, upkeepCost);
-                db.saveClaim(chunk, townId);
-                chunkCache.setClaim(chunk, townId);
-                Bukkit.getScheduler().runTask(plugin, () -> {
-                   p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.chunkclaimed")));
+                    if (db.hasClaims(townId) && !db.isAdjacentClaim(townId, chunk)) {
+                        Bukkit.getScheduler().runTask(plugin, () -> {
+                            p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.disconnectedclaim")));
+                        });
+                        economy.add(uuid, cost);
+                        return;
+                    }
+                    
+                    for(String worldName : config.getStringList("unclaimable-worlds")){
+                        if(p.getWorld().getName().equalsIgnoreCase(worldName)){
+                            Bukkit.getScheduler().runTask(plugin, () -> {
+                                p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.unclaimableworld")));
+                            });
+                            economy.add(uuid, cost);
+                            return;
+                        }
+                    }
+
+                    db.increaseUpkeep(townId, upkeepCost);
+                    db.saveClaim(chunk, townId);
+                    chunkCache.setClaim(chunk, townId);
+                    Bukkit.getScheduler().runTask(plugin, () -> {
+                    p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.chunkclaimed")));
+                    });
                 });
             });
         });
@@ -331,12 +355,16 @@ public class TownEvents implements Listener {
                 });
                 return;
             }
-            if (!db.isTownAdmin(uuid, townId)){
-                Bukkit.getScheduler().runTask(plugin, () -> {
-                    p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.nottownadmin")));
-                });
+
+            // Check if player has permission to unclaim
+            boolean canUnclaim = db.isTownAdmin(uuid, townId) || permissionManager.getPermissionSync(townId, uuid, "CAN_UNCLAIM");
+            if (!canUnclaim) {
+                Bukkit.getScheduler().runTask(plugin, () ->
+                        p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.nopermission")))
+                );
                 return;
             }
+
             Integer claimTown = chunkCache.getTownId(chunk);
             if(claimTown == null){
                 Bukkit.getScheduler().runTask(plugin, () -> {
@@ -368,6 +396,7 @@ public class TownEvents implements Listener {
                         if (block.getType() == Material.LODESTONE) {
                             block.setType(Material.AIR);
                         }
+                        removeTownSpawnHologram(townId);
                         db.updateTownSpawn(townId, null, 0, 0, 0);
                         db.resetTownCreationTime(townId);
                         p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.spawnremoved")));
@@ -396,18 +425,9 @@ public class TownEvents implements Listener {
             return;
         }
         String townName = args[1];
-        if (!townName.matches("^[A-Za-z0-9_]{3,16}$")) {
-            p.sendMessage(Utils.getColor(prefix + "Town name must be 3–16 characters (letters, numbers, _)"));
+        if (!isValidTownName(p, townName)) {
             return;
         }
-        for (String line : config.getStringList("blacklisted-names")) {
-            if (townName.equalsIgnoreCase(line)) {
-                p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.nameblacklisted")));
-                return;
-            }
-        }
-
-
         UUID uuid = p.getUniqueId();
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
@@ -498,6 +518,7 @@ public class TownEvents implements Listener {
                     if (block.getType() == Material.LODESTONE) {
                         block.setType(Material.AIR);
                     }
+                    removeTownSpawnHologram(townId);
                 });
             }
 
@@ -629,6 +650,90 @@ public class TownEvents implements Listener {
         }
     }
 
+    private void updateTownSpawnHologram(int townId, Location spawnBlockLoc, Player contextPlayer) {
+        if (!isHologramIntegrationEnabled()) {
+            return;
+        }
+
+        String id = getTownHologramId(townId);
+        String townName = db.getTownName(townId);
+        int memberCount = db.getTownMembers(townId).size();
+        double balance = db.getTownBalance(townId);
+        String mayorName = resolveMayorName(townId, contextPlayer != null ? contextPlayer.getName() : null);
+
+        List<String> lines = renderHologramLines(townName, mayorName, memberCount, balance, contextPlayer);
+        if (lines.isEmpty()) {
+            return;
+        }
+
+        double yOffset = hologramsConfig.getDouble("holograms.y-offset", 2.25D);
+        Location hologramLoc = spawnBlockLoc.getBlock().getLocation().add(0.5D, yOffset, 0.5D);
+
+        try {
+            DHAPI.removeHologram(id);
+            DHAPI.createHologram(id, hologramLoc, true, lines);
+        } catch (IllegalArgumentException ex) {
+            plugin.getLogger().warning("Failed to create/update town hologram for town id " + townId + ": " + ex.getMessage());
+        }
+    }
+
+    private void removeTownSpawnHologram(int townId) {
+        if (!isHologramIntegrationEnabled()) {
+            return;
+        }
+        DHAPI.removeHologram(getTownHologramId(townId));
+    }
+
+    private boolean isHologramIntegrationEnabled() {
+        FileConfiguration cfg = hologramsConfig;
+        return cfg != null
+                && cfg.getBoolean("holograms.enabled", true)
+                && Bukkit.getPluginManager().isPluginEnabled("DecentHolograms");
+    }
+
+    private String getTownHologramId(int townId) {
+        String prefix = hologramsConfig.getString("holograms.id-prefix", "oztowns_");
+        return prefix + "town_spawn_" + townId;
+    }
+
+    private String resolveMayorName(int townId, String fallback) {
+        List<DatabaseHandler.TownMember> members = db.getTownMembers(townId);
+        for (DatabaseHandler.TownMember member : members) {
+            if (!"MAYOR".equalsIgnoreCase(member.getRole())) {
+                continue;
+            }
+            OfflinePlayer mayor = Bukkit.getOfflinePlayer(member.getUuid());
+            if (mayor.getName() != null && !mayor.getName().isBlank()) {
+                return mayor.getName();
+            }
+        }
+        return fallback == null ? "Unknown" : fallback;
+    }
+
+    private List<String> renderHologramLines(String townName, String mayorName, int memberCount, double balance, Player contextPlayer) {
+        List<String> templateLines = hologramsConfig.getStringList("holograms.string-lines");
+
+        List<String> rendered = new ArrayList<>();
+        DecimalFormat money = new DecimalFormat("0.##");
+
+        for (String line : templateLines) {
+            String value = line
+                    .replace("{townname}", townName == null ? "Unknown" : townName)
+                    .replace("{town-name}", townName == null ? "Unknown" : townName)
+                    .replace("{mayor-name}", mayorName)
+                    .replace("{mayor}", mayorName)
+                    .replace("{town-member-count}", String.valueOf(memberCount))
+                    .replace("{member-count}", String.valueOf(memberCount))
+                    .replace("{balance}", money.format(balance));
+            if (contextPlayer != null && Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
+                value = PlaceholderAPI.setPlaceholders(contextPlayer, value);
+            }
+            rendered.add(Utils.getColor(value));
+        }
+
+        return rendered;
+    }
+
     // ==========================================
     // Town Managment
     // ==========================================
@@ -642,20 +747,12 @@ public class TownEvents implements Listener {
         String newTownName = args[1];
         UUID pUUID = p.getUniqueId();
 
-        if (!newTownName.matches("^[A-Za-z0-9_]{3,16}$")) {
-            p.sendMessage(Utils.getColor(prefix + "Town name must be 3–16 characters (letters, numbers, _)"));
+        if (!isValidTownName(p, newTownName)) {
             return;
-        }
-        for (String line : config.getStringList("blacklisted-names")) {
-            if (newTownName.equalsIgnoreCase(line)) {
-                p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.nameblacklisted")));
-                return;
-            }
         }
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->{
             Integer townId = db.getPlayerTownId(pUUID);
-            String townName = db.getTownName(townId);
 
             if(townId == null){
                 Bukkit.getScheduler().runTask(plugin, () -> {
@@ -671,7 +768,7 @@ public class TownEvents implements Listener {
                 return;
             }
 
-            if(db.townExists(townName)){
+            if(db.townExists(newTownName)){
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.townnametaken")));
                 });
@@ -681,4 +778,31 @@ public class TownEvents implements Listener {
             db.renameTown(townId, newTownName);
         });
     }
+
+    private long getRemainingSpawnCooldownSeconds(UUID uuid, long nowMillis, long cooldownMillis) {
+        Long lastSetAt = lastSpawnSet.get(uuid);
+        if (lastSetAt == null) {
+            return 0L;
+        }
+        long elapsedMillis = nowMillis - lastSetAt;
+        if (elapsedMillis >= cooldownMillis) {
+            return 0L;
+        }
+        return (cooldownMillis - elapsedMillis) / 1000;
+    }
+
+    private boolean isValidTownName(Player player, String townName) {
+        if (!townName.matches("^[A-Za-z0-9_]{3,16}$")) {
+            player.sendMessage(Utils.getColor(prefix + "Town name must be 3-16 characters (letters, numbers, _)"));
+            return false;
+        }
+        for (String blockedName : config.getStringList("blacklisted-names")) {
+            if (townName.equalsIgnoreCase(blockedName)) {
+                player.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.nameblacklisted")));
+                return false;
+            }
+        }
+        return true;
+    }
 }
+

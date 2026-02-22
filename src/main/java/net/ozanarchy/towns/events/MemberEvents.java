@@ -1,5 +1,7 @@
 package net.ozanarchy.towns.events;
 
+import eu.decentsoftware.holograms.api.DHAPI;
+import me.clip.placeholderapi.PlaceholderAPI;
 import net.ozanarchy.ozanarchyEconomy.api.EconomyAPI;
 import net.ozanarchy.towns.TownsPlugin;
 import net.ozanarchy.towns.handlers.ChunkHandler;
@@ -8,6 +10,8 @@ import net.ozanarchy.towns.util.Utils;
 import net.ozanarchy.towns.handlers.DatabaseHandler;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
+import org.bukkit.Location;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.Particle;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -16,12 +20,18 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.text.DecimalFormat;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static net.ozanarchy.towns.TownsPlugin.config;
+import static net.ozanarchy.towns.TownsPlugin.hologramsConfig;
 import static net.ozanarchy.towns.TownsPlugin.messagesConfig;
+
+import net.ozanarchy.towns.handlers.PermissionManager;
 
 public class MemberEvents implements Listener {
     private static final long INVITE_TIMEOUT_SECONDS = 30L;
@@ -41,16 +51,17 @@ public class MemberEvents implements Listener {
     }
 
     private final DatabaseHandler db;
+    private final PermissionManager permissionManager;
     private final TownsPlugin plugin;
     private final EconomyAPI economy;
     private final ChunkHandler chunkCache;
     private final Map<UUID, TownInvite> pendingInvites = new ConcurrentHashMap<>();
     private final String prefix = Utils.prefix();
-    private final String noPerm = messagesConfig.getString("messages.nopermission");
     private final String incorrectUsage = messagesConfig.getString("messages.incorrectusage");
 
-    public MemberEvents(DatabaseHandler data, TownsPlugin plugin, EconomyAPI economy, ChunkHandler chunkCache){
+    public MemberEvents(DatabaseHandler data, PermissionManager permissionManager, TownsPlugin plugin, EconomyAPI economy, ChunkHandler chunkCache){
         this.db = data;
+        this.permissionManager = permissionManager;
         this.plugin = plugin;
         this.economy = economy;
         this.chunkCache = chunkCache;
@@ -86,12 +97,16 @@ public class MemberEvents implements Listener {
                });
                return;
            }
-           if (!db.isTownAdmin(requesterUUID, townId)) {
+
+           // Check if player has permission to invite
+           boolean canInvite = db.isTownAdmin(requesterUUID, townId) || permissionManager.getPermissionSync(townId, requesterUUID, "CAN_INVITE");
+           if (!canInvite) {
                Bukkit.getScheduler().runTask(plugin, () -> {
-                   requester.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.nottownadmin")));
+                   requester.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.nopermission")));
                });
                return;
            }
+
            if (db.getPlayerTownId(targetUUID) != null){
                Bukkit.getScheduler().runTask(plugin, () -> {
                    requester.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.playeralreadyintown")));
@@ -137,6 +152,7 @@ public class MemberEvents implements Listener {
 
             if (success){
                 db.increaseUpkeep(inviterTown, config.getDouble("towns.addedmemberupkeep"));
+                refreshTownSpawnHologram(invite.townId, target);
 
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     Player inviter = Bukkit.getPlayer(invite.inviterUuid);
@@ -220,6 +236,9 @@ public class MemberEvents implements Listener {
            }
 
            boolean success = db.removeMember(targetUUID, townId);
+           if (success) {
+               refreshTownSpawnHologram(townId, requester);
+           }
            Bukkit.getScheduler().runTask(plugin, () -> {
               if(success){
                   requester.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.removedmember").replace("{player}", target.getName())));
@@ -264,6 +283,9 @@ public class MemberEvents implements Listener {
             }
 
             boolean success = db.removeMember(uuid, townId);
+            if (success) {
+                refreshTownSpawnHologram(townId, p);
+            }
 
             Bukkit.getScheduler().runTask(plugin, () ->{
                if (success) {
@@ -327,6 +349,9 @@ public class MemberEvents implements Listener {
                 return;
             }
             boolean success = db.setRole(targetUUID, townId, "OFFICER");
+            if (success) {
+                refreshTownSpawnHologram(townId, requester);
+            }
             Bukkit.getScheduler().runTask(plugin, () -> {
                 if(success){
                     requester.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.promotedmember").replace("{player}", target.getName())));
@@ -390,6 +415,9 @@ public class MemberEvents implements Listener {
                 return;
             }
             boolean success = db.setRole(targetUUID, townId, "MEMBER");
+            if (success) {
+                refreshTownSpawnHologram(townId, requester);
+            }
             Bukkit.getScheduler().runTask(plugin, () -> {
                 if(success){
                     requester.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.demotedmember").replace("{player}", target.getName())));
@@ -407,8 +435,7 @@ public class MemberEvents implements Listener {
             return;
         }
 
-        Player target = (Player) Bukkit.getPlayer(args[1]);
-    
+        Player target = Bukkit.getPlayer(args[1]);
         if (target == null || !target.isOnline()){
             p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.playernotfound")));
             return;
@@ -418,10 +445,15 @@ public class MemberEvents implements Listener {
         UUID requesterUUID = p.getUniqueId();
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-            int townId = db.getPlayerTownId(requesterUUID);
-            int targetTownId = db.getPlayerTownId(targetUUID);
+            Integer townId = db.getPlayerTownId(requesterUUID);
+            Integer targetTownId = db.getPlayerTownId(targetUUID);
+            if (townId == null || targetTownId == null) {
+                Bukkit.getScheduler().runTask(plugin, () ->
+                        p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.notown"))));
+                return;
+            }
             String townName = db.getTownName(townId);
-            if(targetTownId != townId){
+            if(!targetTownId.equals(townId)){
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.playernotinyourtown")));
                 });
@@ -439,9 +471,9 @@ public class MemberEvents implements Listener {
                 );
                 return;
             }
-            Boolean setRole = db.setRole(requesterUUID, townId, "OFFICER");
             Boolean setMayor = db.setMayor(targetUUID, townId);
-            if(setMayor && setRole){
+            if(setMayor){
+                refreshTownSpawnHologram(townId, p);
                 Bukkit.getScheduler().runTask(plugin, () ->{
                     p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.mayortransfered").replace("{town}", townName).replace("{player}", target.getName())));
                     target.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.newtownmayor").replace("{town}", townName)));
@@ -465,13 +497,8 @@ public class MemberEvents implements Listener {
      * Deposits money into the town bank.
      */
     public void giveTownMoney(Player p, String[] args){
-        if(args.length < 2){
-            p.sendMessage(Utils.getColor(prefix + incorrectUsage));
-            return;
-        }
-        double amount = Double.parseDouble(args[1]);
-        if(amount < 1){
-            p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.invalidamount")));
+        Double amount = parsePositiveAmount(p, args);
+        if (amount == null) {
             return;
         }
 
@@ -486,6 +513,7 @@ public class MemberEvents implements Listener {
             economy.remove(p.getUniqueId(), amount, success ->{
                 if(success){
                     db.depositTownMoney(townId, amount);
+                    refreshTownSpawnHologram(townId, p);
                     Bukkit.getScheduler().runTask(plugin, () -> {
                         p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.depositwealth").replace("{amount}", String.valueOf(amount))));
                     });
@@ -502,13 +530,8 @@ public class MemberEvents implements Listener {
      * Withdraws money from the town bank (Officers and Mayors only).
      */
     public void withdrawTownMoney(Player p, String[] args){
-        if(args.length < 2){
-            p.sendMessage(Utils.getColor(prefix + incorrectUsage));
-            return;
-        }
-        double amount = Double.parseDouble(args[1]);
-        if(amount < 1){
-            p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.invalidamount")));
+        Double amount = parsePositiveAmount(p, args);
+        if (amount == null) {
             return;
         }
 
@@ -520,12 +543,25 @@ public class MemberEvents implements Listener {
                 });
                 return;
             }
-            boolean isAdmin = db.isTownAdmin(p.getUniqueId(), townId);
-            if(isAdmin){
+
+            boolean canWithdraw = db.isTownAdmin(p.getUniqueId(), townId) || permissionManager.getPermissionSync(townId, p.getUniqueId(), "CAN_WITHDRAW");
+            if(canWithdraw){
                 economy.add(p.getUniqueId(), amount);
-                db.withdrawTownMoney(townId, amount);
+                boolean success = db.withdrawTownMoney(townId, amount);
+                if (success) {
+                    refreshTownSpawnHologram(townId, p);
+                    Bukkit.getScheduler().runTask(plugin, () -> {
+                        p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.withdrawwealth").replace("{amount}", String.valueOf(amount))));
+                    });
+                } else {
+                    economy.remove(p.getUniqueId(), amount, (ignored) -> {}); // Refund failed withdrawal
+                    Bukkit.getScheduler().runTask(plugin, () -> {
+                        p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.notenoughbankbalance")));
+                    });
+                }
+            } else {
                 Bukkit.getScheduler().runTask(plugin, () -> {
-                    p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.withdrawwealth").replace("{amount}", String.valueOf(amount))));
+                    p.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.nopermission")));
                 });
             }
         });
@@ -664,5 +700,96 @@ public class MemberEvents implements Listener {
                 .replace("{town}", townName != null ? townName : "Unknown")
                 .replace("{seconds}", String.valueOf(INVITE_TIMEOUT_SECONDS))));
         target.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.inviteactions")));
+    }
+
+    private void refreshTownSpawnHologram(int townId, Player contextPlayer) {
+        if (hologramsConfig == null
+                || !hologramsConfig.getBoolean("holograms.enabled", true)
+                || !Bukkit.getPluginManager().isPluginEnabled("DecentHolograms")) {
+            return;
+        }
+
+        Location spawn = db.getTownSpawn(townId);
+        if (spawn == null || spawn.getWorld() == null) {
+            return;
+        }
+
+        String idPrefix = hologramsConfig.getString("holograms.id-prefix", "oztowns_");
+        String hologramId = idPrefix + "town_spawn_" + townId;
+        String townName = db.getTownName(townId);
+        int memberCount = db.getTownMembers(townId).size();
+        double balance = db.getTownBalance(townId);
+        String mayorName = resolveMayorName(townId, contextPlayer != null ? contextPlayer.getName() : null);
+        List<String> lines = renderHologramLines(townName, mayorName, memberCount, balance, contextPlayer);
+        if (lines.isEmpty()) {
+            return;
+        }
+
+        double yOffset = hologramsConfig.getDouble("holograms.y-offset", 2.25D);
+        Location hologramLoc = spawn.getBlock().getLocation().add(0.5D, yOffset, 0.5D);
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            try {
+                DHAPI.removeHologram(hologramId);
+                DHAPI.createHologram(hologramId, hologramLoc, true, lines);
+            } catch (IllegalArgumentException ex) {
+                plugin.getLogger().warning("Failed to refresh town hologram for town id " + townId + ": " + ex.getMessage());
+            }
+        });
+    }
+
+    private String resolveMayorName(int townId, String fallback) {
+        List<DatabaseHandler.TownMember> members = db.getTownMembers(townId);
+        for (DatabaseHandler.TownMember member : members) {
+            if (!"MAYOR".equalsIgnoreCase(member.getRole())) {
+                continue;
+            }
+            OfflinePlayer mayor = Bukkit.getOfflinePlayer(member.getUuid());
+            if (mayor.getName() != null && !mayor.getName().isBlank()) {
+                return mayor.getName();
+            }
+        }
+        return fallback == null ? "Unknown" : fallback;
+    }
+
+    private List<String> renderHologramLines(String townName, String mayorName, int memberCount, double balance, Player contextPlayer) {
+        List<String> templateLines = hologramsConfig.getStringList("holograms.string-lines");
+        List<String> rendered = new ArrayList<>();
+        DecimalFormat money = new DecimalFormat("0.##");
+
+        for (String line : templateLines) {
+            String value = line
+                    .replace("{townname}", townName == null ? "Unknown" : townName)
+                    .replace("{town-name}", townName == null ? "Unknown" : townName)
+                    .replace("{mayor-name}", mayorName)
+                    .replace("{mayor}", mayorName)
+                    .replace("{town-member-count}", String.valueOf(memberCount))
+                    .replace("{member-count}", String.valueOf(memberCount))
+                    .replace("{balance}", money.format(balance));
+            if (contextPlayer != null && Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
+                value = PlaceholderAPI.setPlaceholders(contextPlayer, value);
+            }
+            rendered.add(Utils.getColor(value));
+        }
+
+        return rendered;
+    }
+
+    private Double parsePositiveAmount(Player player, String[] args) {
+        if (args.length < 2) {
+            player.sendMessage(Utils.getColor(prefix + incorrectUsage));
+            return null;
+        }
+        double amount;
+        try {
+            amount = Double.parseDouble(args[1]);
+        } catch (NumberFormatException ignored) {
+            player.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.invalidamount")));
+            return null;
+        }
+        if (amount < 1) {
+            player.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.invalidamount")));
+            return null;
+        }
+        return amount;
     }
 }

@@ -1,5 +1,6 @@
 package net.ozanarchy.towns.events;
 
+import eu.decentsoftware.holograms.api.DHAPI;
 import net.ozanarchy.chestlock.events.LockPickSuccessEvent;
 import net.ozanarchy.ozanarchyEconomy.api.EconomyAPI;
 import net.ozanarchy.towns.TownsPlugin;
@@ -26,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static net.ozanarchy.towns.TownsPlugin.hologramsConfig;
 import static net.ozanarchy.towns.TownsPlugin.messagesConfig;
 
 public class LockPickListener implements Listener {
@@ -202,6 +204,7 @@ public class LockPickListener implements Listener {
             });
 
             db.updateTownSpawn(raidedTownId, null, 0, 0, 0);
+            removeTownSpawnHologram(raidedTownId);
             
             if(raiderTownId != null){
                 db.transferBankBalance(raidedTownId, raiderTownId);
@@ -232,5 +235,15 @@ public class LockPickListener implements Listener {
             // Reload chunk cache on next tick
             Bukkit.getScheduler().runTask(plugin, plugin::reloadChunkCache);
         });
+    }
+
+    private void removeTownSpawnHologram(int townId) {
+        if (hologramsConfig == null
+                || !hologramsConfig.getBoolean("holograms.enabled", true)
+                || !Bukkit.getPluginManager().isPluginEnabled("DecentHolograms")) {
+            return;
+        }
+        String idPrefix = hologramsConfig.getString("holograms.id-prefix", "oztowns_");
+        DHAPI.removeHologram(idPrefix + "town_spawn_" + townId);
     }
 }

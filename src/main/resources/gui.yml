@@ -123,3 +123,61 @@ members_gui:
     name: "&cNo members"
     lore:
       - "&7Your town has no members."
+
+# Permission GUI for town members
+permissions_gui:
+  title: "&8Permissions: {player}"
+  size: 27
+  filler:
+    fill: true
+    material: "GRAY_STAINED_GLASS_PANE"
+    name: " "
+  items:
+    can_claim:
+      slot: 10
+      material: "DIAMOND_SHOVEL"
+      name: "&6&lClaiming"
+      lore:
+        - "&7Allows member to claim chunks."
+        - "&7Status: {status}"
+    can_unclaim:
+      slot: 11
+      material: "IRON_SHOVEL"
+      name: "&c&lUnclaiming"
+      lore:
+        - "&7Allows member to unclaim chunks."
+        - "&7Status: {status}"
+    can_withdraw:
+      slot: 12
+      material: "GOLD_INGOT"
+      name: "&e&lWithdrawing"
+      lore:
+        - "&7Allows member to withdraw money."
+        - "&7Status: {status}"
+    can_invite:
+      slot: 13
+      material: "PAPER"
+      name: "&b&lInviting"
+      lore:
+        - "&7Allows member to invite players."
+        - "&7Status: {status}"
+    can_build:
+      slot: 14
+      material: "GRASS_BLOCK"
+      name: "&2&lBuilding"
+      lore:
+        - "&7Allows member to build/break."
+        - "&7Status: {status}"
+    can_interact:
+      slot: 15
+      material: "LEVER"
+      name: "&f&lInteraction"
+      lore:
+        - "&7Allows member to interact."
+        - "&7Status: {status}"
+  back_button:
+    slot: 18
+    material: "ARROW"
+    name: "&cBack to Members"
+    lore:
+      - "&7Return to the members list."

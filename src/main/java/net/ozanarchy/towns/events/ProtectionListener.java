@@ -1,5 +1,6 @@
 package net.ozanarchy.towns.events;
 
+import net.ozanarchy.towns.handlers.PermissionManager;
 import net.ozanarchy.towns.util.Utils;
 import net.ozanarchy.towns.handlers.ChunkHandler;
 import net.ozanarchy.towns.TownsPlugin;
@@ -29,18 +30,19 @@ import static net.ozanarchy.towns.TownsPlugin.messagesConfig;
 public class ProtectionListener implements Listener {
     private final DatabaseHandler db;
     private final ChunkHandler chunkCache;
+    private final PermissionManager permissionManager;
 
-    public ProtectionListener(DatabaseHandler db, ChunkHandler chunkCache) {
+    public ProtectionListener(DatabaseHandler db, ChunkHandler chunkCache, PermissionManager permissionManager) {
         this.db = db;
         this.chunkCache = chunkCache;
+        this.permissionManager = permissionManager;
     }
 
     /**
      * Backwards-compatible constructor that may be called with the plugin instance first.
-     * The plugin parameter is unused but accepted for compatibility with older calls.
      */
-    public ProtectionListener(TownsPlugin plugin, DatabaseHandler db, ChunkHandler chunkCache) {
-        this(db, chunkCache);
+    public ProtectionListener(TownsPlugin plugin, DatabaseHandler db, ChunkHandler chunkCache, PermissionManager permissionManager) {
+        this(db, chunkCache, permissionManager);
     }
 
     /**
@@ -59,7 +61,7 @@ public class ProtectionListener implements Listener {
                 }
             }
         }
-        protection(e.getPlayer(), e.getBlock().getChunk(), e);
+        protection(e.getPlayer(), e.getBlock().getChunk(), "CAN_BUILD", e);
     }
 
     /**
@@ -88,7 +90,7 @@ public class ProtectionListener implements Listener {
             }
         }
         
-        protection(e.getPlayer(), e.getBlock().getChunk(), e);
+        protection(e.getPlayer(), e.getBlock().getChunk(), "CAN_BUILD", e);
     }
 
     /**
@@ -129,7 +131,7 @@ public class ProtectionListener implements Listener {
             }
         }
         if (e.getClickedBlock() != null) {
-            protection(e.getPlayer(), e.getClickedBlock().getChunk(), e);
+            protection(e.getPlayer(), e.getClickedBlock().getChunk(), "CAN_INTERACT", e);
         }
     }
 
@@ -175,7 +177,11 @@ public class ProtectionListener implements Listener {
 
         if (p.hasPermission("oztowns.admin.protectionbypass")) return;
 
-        boolean allowed = db.canBuild(p.getUniqueId(), chunk);
+        Integer playerTown = db.getPlayerTownId(p.getUniqueId());
+        boolean allowed = playerTown != null &&
+                            townId.equals(playerTown) &&
+                            (db.isTownAdmin(p.getUniqueId(), playerTown) || 
+                             permissionManager.getPermissionSync(playerTown, p.getUniqueId(), "CAN_INTERACT"));
 
         if (allowed) return;
 
@@ -203,17 +209,19 @@ public class ProtectionListener implements Listener {
     /**
      * General land protection logic. Checks if the player is allowed to build/interact.
      */
-    private void protection(Player p, Chunk chunk, Cancellable event){
+    private void protection(Player p, Chunk chunk, String permission, Cancellable event){
         if (p.hasPermission("oztowns.admin.protectionbypass")) return;
 
         Integer claimTown = chunkCache.getTownId(chunk);
         if (claimTown == null) return;
         Integer playerTown = db.getPlayerTownId(p.getUniqueId());
         
-        // Only allow Town Admins (Mayor/Officers) to build in their own town
+        // Admins (Mayor/Officer) have full access. Members check for specific permission.
         boolean allowed = playerTown != null &&
-                            db.isTownAdmin(p.getUniqueId(), playerTown) &&
-                            claimTown.equals(playerTown);
+                            claimTown.equals(playerTown) &&
+                            (db.isTownAdmin(p.getUniqueId(), playerTown) || 
+                             permissionManager.getPermissionSync(playerTown, p.getUniqueId(), permission));
+                             
         if(!allowed) {
             event.setCancelled(true);
             p.sendMessage(Utils.getColor(Utils.prefix() +

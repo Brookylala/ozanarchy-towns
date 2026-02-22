@@ -26,8 +26,7 @@ public class TownsCommand implements CommandExecutor, TabCompleter {
     private final MemberEvents mEvents;
     private final MainGui gui;
     private final MembersGui membersGui;
-    private String prefix = Utils.prefix();
-    private String noPerm = messagesConfig.getString("messages.nopermission");
+    private final String prefix = Utils.prefix();
 
     public TownsCommand(DatabaseHandler db, TownEvents events, MemberEvents mEvents, MainGui gui, MembersGui membersGui) {
         this.db = db;
@@ -38,19 +37,19 @@ public class TownsCommand implements CommandExecutor, TabCompleter {
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command command, String s, String[] args) {
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         // Town commands are player-only because they depend on player location and UUID.
         if (!(sender instanceof Player p)) {
             sender.sendMessage("Players only.");
             return true;
         }
 
-        if(!p.hasPermission("oztowns.commands")){
-            p.sendMessage(Utils.getColor(prefix + noPerm));
+        if (!p.hasPermission("oztowns.commands")) {
+            sendNoPermission(p);
             return true;
         }
 
-        if(db == null){
+        if (db == null) {
             p.sendMessage(Utils.getColor(prefix + "&cDatabase Error, Please seek an Admin."));
             return true;
         }
@@ -68,32 +67,28 @@ public class TownsCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             case "help", "commands" -> {
-                if(!(p.hasPermission("oztowns.commands.help"))){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.help")) {
                     return true;
                 }
                 helpCommand(p, args);
                 return true;
             }
             case "claim" -> {
-                if(!p.hasPermission("oztowns.commands.claim")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.claim")) {
                     return true;
                 }
                 events.claimLand(p);
                 return true;
             }
             case "create" -> {
-                if(!p.hasPermission("oztowns.commands.create")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.create")) {
                     return true;
                 }
                 events.createTown(p, args);
                 return true;
             }
             case "abandon" -> {
-                if(!p.hasPermission("oztowns.commands.abandon")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.abandon")) {
                     return true;
                 }
                 if(args.length <2 || !args[1].toLowerCase().equals("confirm")){
@@ -104,96 +99,84 @@ public class TownsCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             case "unclaim" -> {
-                if(!p.hasPermission("oztowns.commands.unclaim")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.unclaim")) {
                     return true;
                 }
                 events.removeChunk(p);
                 return true;
             }
             case "setspawn" -> {
-                if(!p.hasPermission("oztowns.commands.setspawn")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.setspawn")) {
                     return true;
                 }
                 events.setSpawn(p);
                 return true;
             }
             case "spawn" -> {
-                if(!p.hasPermission("oztowns.commands.spawn")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.spawn")) {
                     return true;
                 }
                 events.spawn(p);
                 return true;
             }
             case "add", "invite" -> {
-                if(!p.hasPermission("oztowns.commands.add")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.add")) {
                     return true;
                 }
                 mEvents.addMember(p, args);
                 return true;
             }
             case "accept" -> {
-                if(!p.hasPermission("oztowns.commands.add")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.add")) {
                     return true;
                 }
                 mEvents.acceptInvite(p);
                 return true;
             }
             case "deny" -> {
-                if(!p.hasPermission("oztowns.commands.add")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.add")) {
                     return true;
                 }
                 mEvents.denyInvite(p);
                 return true;
             }
             case "remove" -> {
-                if(!p.hasPermission("oztowns.commands.remove")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.remove")) {
                     return true;
                 }
                 mEvents.removeMember(p, args);
                 return true;
             }
             case "promote" -> {
-                if(!p.hasPermission("oztowns.commands.promote")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.promote")) {
                     return true;
                 }
                 mEvents.promotePlayer(p, args);
                 return true;
             }
             case "demote" -> {
-                if(!p.hasPermission("oztowns.commands.demote")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.demote")) {
                     return true;
                 }
                 mEvents.demotePlayer(p, args);
                 return true;
             }
             case "leave" -> {
-                if(!p.hasPermission("oztowns.commands.leave")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.leave")) {
                     return true;
                 }
                 mEvents.leaveTown(p);
                 return true;
             }
             case "members" -> {
-                if(!p.hasPermission("oztowns.commands.members")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.members")) {
                     return true;
                 }
                 membersGui.openGui(p);
                 return true;
             }
             case "visualizer", "chunks" -> {
-                if(!p.hasPermission("oztowns.commands.visualizer")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.visualizer")) {
                     return true;
                 }
                 if(config.getBoolean("visualizer.enabled")){
@@ -205,16 +188,14 @@ public class TownsCommand implements CommandExecutor, TabCompleter {
                 }
             }
             case "setmayor" -> {
-                if(!p.hasPermission("oztowns.commands.transfer")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.transfer")) {
                     return true;
                 }
                 mEvents.transferMayor(p, args);
                 return true;
             }
             case "rename" -> {
-                if(!p.hasPermission("oztowns.commands.rename")){
-                    p.sendMessage(Utils.getColor(prefix + noPerm));
+                if (!hasPermission(p, "oztowns.commands.rename")) {
                     return true;
                 }
                 events.renameTown(p, args);
@@ -286,5 +267,17 @@ public class TownsCommand implements CommandExecutor, TabCompleter {
             p.sendMessage(Utils.getColor(line));
         }
         p.sendMessage(Utils.getColor("&7Use &f/towns help " + (page.equals("1") ? "2" : "1") + " &7to view the other page."));
+    }
+
+    private boolean hasPermission(Player player, String node) {
+        if (player.hasPermission(node)) {
+            return true;
+        }
+        sendNoPermission(player);
+        return false;
+    }
+
+    private void sendNoPermission(Player player) {
+        player.sendMessage(Utils.getColor(prefix + messagesConfig.getString("messages.nopermission")));
     }
 }

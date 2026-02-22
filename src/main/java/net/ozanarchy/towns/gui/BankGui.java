@@ -83,37 +83,14 @@ public class BankGui implements Listener {
                         if (itemSection == null) continue;
 
                         int slot = itemSection.getInt("slot");
-                        String materialName = itemSection.getString("material", "PAPER");
-                        String texture = itemSection.getString("texture");
                         String name = Utils.getColor(itemSection.getString("name", " "));
-                        List<String> lore = itemSection.getStringList("lore");
                         List<String> coloredLore = new ArrayList<>();
-                        for (String line : lore) {
+                        for (String line : itemSection.getStringList("lore")) {
                             String processedLine = line.replace("{balance}", String.valueOf(finalBalance))
-                                                      .replace("{upkeep}", String.valueOf(finalUpkeep));
+                                    .replace("{upkeep}", String.valueOf(finalUpkeep));
                             coloredLore.add(Utils.getColor(processedLine));
                         }
-
-                        ItemStack item;
-                        if (materialName.equals("PLAYER_HEAD") && texture != null && !texture.isEmpty()) {
-                            item = SkullCreator.itemFromBase64(texture);
-                        } else {
-                            try {
-                                Material material = Material.valueOf(materialName);
-                                item = new ItemStack(material);
-                            } catch (IllegalArgumentException e) {
-                                item = new ItemStack(Material.PAPER);
-                            }
-                        }
-
-                        ItemMeta meta = item.getItemMeta();
-                        if (meta != null) {
-                            meta.setDisplayName(name);
-                            meta.setLore(coloredLore);
-                            item.setItemMeta(meta);
-                        }
-
-                        inv.setItem(slot, item);
+                        inv.setItem(slot, createItem(itemSection, name, coloredLore, Material.PAPER));
                     }
                 }
 
@@ -253,33 +230,9 @@ public class BankGui implements Listener {
         ConfigurationSection filler = section.getConfigurationSection("filler");
         if (filler == null) return;
 
-        String materialName = filler.getString("material", "GRAY_STAINED_GLASS_PANE");
-        String texture = filler.getString("texture");
         String name = Utils.getColor(filler.getString("name", " "));
-        List<String> lore = filler.getStringList("lore");
-        List<String> coloredLore = new ArrayList<>();
-        for (String line : lore) {
-            coloredLore.add(Utils.getColor(line));
-        }
-
-        ItemStack fillerItem;
-        if (materialName.equals("PLAYER_HEAD") && texture != null && !texture.isEmpty()) {
-            fillerItem = SkullCreator.itemFromBase64(texture);
-        } else {
-            try {
-                Material material = Material.valueOf(materialName);
-                fillerItem = new ItemStack(material);
-            } catch (IllegalArgumentException e) {
-                fillerItem = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
-            }
-        }
-
-        ItemMeta meta = fillerItem.getItemMeta();
-        if (meta != null) {
-            meta.setDisplayName(name);
-            meta.setLore(coloredLore);
-            fillerItem.setItemMeta(meta);
-        }
+        List<String> coloredLore = colorizeLines(filler.getStringList("lore"));
+        ItemStack fillerItem = createItem(filler, name, coloredLore, Material.GRAY_STAINED_GLASS_PANE);
 
         boolean fill = filler.getBoolean("fill", false);
         List<Integer> slots = filler.getIntegerList("slots");
@@ -298,5 +251,37 @@ public class BankGui implements Listener {
             if (slot < 0 || slot >= inv.getSize()) continue;
             inv.setItem(slot, fillerItem.clone());
         }
+    }
+
+    private List<String> colorizeLines(List<String> lines) {
+        List<String> colored = new ArrayList<>(lines.size());
+        for (String line : lines) {
+            colored.add(Utils.getColor(line));
+        }
+        return colored;
+    }
+
+    private ItemStack createItem(ConfigurationSection section, String displayName, List<String> lore, Material fallback) {
+        String materialName = section.getString("material", fallback.name());
+        String texture = section.getString("texture");
+
+        ItemStack item;
+        if ("PLAYER_HEAD".equals(materialName) && texture != null && !texture.isEmpty()) {
+            item = SkullCreator.itemFromBase64(texture);
+        } else {
+            try {
+                item = new ItemStack(Material.valueOf(materialName));
+            } catch (IllegalArgumentException e) {
+                item = new ItemStack(fallback);
+            }
+        }
+
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(displayName);
+            meta.setLore(lore);
+            item.setItemMeta(meta);
+        }
+        return item;
     }
 }
